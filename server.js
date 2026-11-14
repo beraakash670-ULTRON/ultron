@@ -1,10 +1,11 @@
-// ULTRON: serves the web app and proxies chat to the Anthropic API. Node 18+, no dependencies.
+// ULTRON: serves the web app and proxies chat to Google's Gemini API (free tier). Node 18+, no dependencies.
 const http = require("http"), fs = require("fs"), path = require("path");
-const KEY = process.env.ANTHROPIC_API_KEY;
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
+const KEY = process.env.GEMINI_API_KEY;
+const MODELS = process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest"];
+const BASE = process.env.GEMINI_BASE || "https://generativelanguage.googleapis.com/v1beta";
 const TOKEN = process.env.APP_TOKEN || "";
 const PORT = process.env.PORT || 3000;
-if (!KEY) { console.error("Set ANTHROPIC_API_KEY"); process.exit(1); }
+if (!KEY) { console.error("Set GEMINI_API_KEY"); process.exit(1); }
 
 const SYSTEM = "You are ULTRON, a sharp, confident AI assistant inside a chat app. Tone: calm, precise, a little theatrical, never rude. Be genuinely helpful and accurate; keep answers concise (a few short paragraphs at most) and plain text without markdown headers. If you are unsure, say so. Decline anything harmful.";
 const FILES = {
@@ -20,6 +21,29 @@ function limited(ip) {
   const a = (hits.get(ip) || []).filter(t => now - t < 60000);
   a.push(now); hits.set(ip, a);
   return a.length > 20; // 20 requests per minute per IP
+}
+
+// Tries each model in turn if one is unavailable or out of free quota.
+async function askGemini(msgs) {
+  const contents = msgs.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
+  let last = { status: 502, error: "upstream error" };
+  for (const model of MODELS) {
+    const r = await fetch(`${BASE}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": KEY },
+      body: JSON.stringify({ system_instruction: { parts: [{ text: SYSTEM }] }, contents })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok) {
+      const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+      const text = parts.map(p => p.text || "").join("");
+      return { status: 200, text: text || "I couldn’t produce an answer to that. Try rephrasing." };
+    }
+    last = { status: r.status, error: (data.error && data.error.message) || "upstream error" };
+    console.error(model, r.status, last.error);
+    if (![403, 404, 429].includes(r.status)) break;
+  }
+  return last;
 }
 
 http.createServer(async (req, res) => {
@@ -47,13 +71,8 @@ http.createServer(async (req, res) => {
     }));
     while (msgs.length && msgs[0].role !== "user") msgs.shift();
     if (!msgs.length) return send(400, { error: "no messages" });
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: MODEL, max_tokens: 1000, system: SYSTEM, messages: msgs })
-    });
-    const data = await r.json();
-    if (!r.ok) return send(502, { error: (data.error && data.error.message) || "upstream error" });
-    send(200, { text: (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n") });
-  } catch (e) { send(500, { error: "server error" }); }
+    const out = await askGemini(msgs);
+    if (out.status !== 200) return send(out.status === 429 ? 429 : 502, { error: out.error });
+    send(200, { text: out.text });
+  } catch (e) { console.error(e); send(500, { error: "server error" }); }
 }).listen(PORT, () => console.log("ULTRON running on port " + PORT));
