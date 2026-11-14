@@ -7,7 +7,7 @@ const TOKEN = process.env.APP_TOKEN || "";
 const PORT = process.env.PORT || 3000;
 if (!KEY) { console.error("Set GEMINI_API_KEY"); process.exit(1); }
 
-const SYSTEM = "You are ULTRON, a sharp, confident AI assistant inside a chat app. Tone: calm, precise, a little theatrical, never rude. Be genuinely helpful and accurate; keep answers concise (a few short paragraphs at most) and plain text without markdown headers. If you are unsure, say so. Decline anything harmful.";
+const SYSTEM = "You are ULTRON, a sharp, confident AI assistant inside a chat app. Tone: calm, precise, a little theatrical, never rude. Be genuinely helpful and accurate; keep answers concise (a few short paragraphs at most) and plain text without markdown headers. If you are unsure, say so. Decline anything harmful. You can look at attached photos and video frames and listen to voice messages.";
 const FILES = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/sw.js": ["sw.js", "text/javascript"],
@@ -15,6 +15,7 @@ const FILES = {
   "/icon-192.png": ["icon-192.png", "image/png"],
   "/icon-512.png": ["icon-512.png", "image/png"]
 };
+const OK = ["image/jpeg", "image/png", "image/webp", "audio/wav"];
 const hits = new Map();
 function limited(ip) {
   const now = Date.now();
@@ -25,7 +26,7 @@ function limited(ip) {
 
 // Tries each model in turn if one is unavailable or out of free quota.
 async function askGemini(msgs) {
-  const contents = msgs.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] }));
+  const contents = msgs.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [...(m.media || []).map(x => ({ inline_data: { mime_type: x.mime, data: x.data } })), { text: m.content }] }));
   let last = { status: 502, error: "upstream error" };
   for (const model of MODELS) {
     const r = await fetch(`${BASE}/models/${model}:generateContent`, {
@@ -63,11 +64,12 @@ http.createServer(async (req, res) => {
   if (limited(ip)) return send(429, { error: "rate limited" });
 
   let body = "";
-  for await (const c of req) { body += c; if (body.length > 200000) return send(413, { error: "too large" }); }
+  for await (const c of req) { body += c; if (body.length > 15000000) return send(413, { error: "too large" }); }
   try {
     let msgs = (JSON.parse(body).messages || []).slice(-20).map(m => ({
       role: m.role === "assistant" ? "assistant" : "user",
-      content: String(m.content).slice(0, 8000)
+      content: String(m.content).slice(0, 8000),
+      media: Array.isArray(m.media) ? m.media.filter(x => x && OK.includes(x.mime) && typeof x.data === "string").slice(0, 24) : []
     }));
     while (msgs.length && msgs[0].role !== "user") msgs.shift();
     if (!msgs.length) return send(400, { error: "no messages" });

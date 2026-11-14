@@ -41,6 +41,22 @@ textarea{flex:1;resize:none;font:16px/1.4 inherit;font-family:inherit;color:var(
 textarea:focus{border-color:var(--accent)}
 #go{background:var(--accent);color:var(--accent-ink);border:0;border-radius:12px;padding:0 18px;font-weight:700;letter-spacing:.08em}
 #go:disabled{opacity:.5}
+
+#tray{display:flex;gap:8px;overflow-x:auto;padding:8px 12px 0;border-top:1px solid var(--line);background:var(--bg)}
+#tray:empty{display:none}
+.chip2{flex:none;display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:10px;background:var(--panel);padding:4px 6px;font-size:13px;color:var(--mute)}
+.chip2 img{width:44px;height:44px;object-fit:cover;border-radius:6px;display:block}
+.chip2 button{background:none;border:0;color:var(--accent);font-size:16px;padding:0 4px}
+#bar{display:flex;align-items:flex-end;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg)}
+#tray:not(:empty)+#bar{border-top:0}
+.ib{flex:none;width:44px;height:44px;font-size:20px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:0}
+.ib.rec{border-color:var(--accent);animation:p 1s ease-in-out infinite}
+#go{height:44px}
+.m audio{display:block;max-width:100%;margin-bottom:6px}
+.m .th{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.m .th img{width:96px;height:96px;object-fit:cover;border-radius:8px}
+.m .tg{font-size:13px;opacity:.7}
+
 </style>
 </head>
 <body>
@@ -53,61 +69,173 @@ textarea:focus{border-color:var(--accent)}
 <div id="log">
   <div id="hero">
     <div class="w">ULTRON</div>
-    <p>Ask me anything. I’ll give you a straight answer.</p>
+    <p>Type, speak with 🎤, or show me photos and videos with 📎.</p>
     <div class="chips" id="chips"></div>
   </div>
 </div>
-<div class="form-wrap">
-<div style="display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg)">
+<div id="tray"></div>
+<div id="bar">
+  <button class="ib" id="att" type="button" aria-label="Attach photo or video">📎</button>
+  <button class="ib" id="mic" type="button" aria-label="Record voice message">🎤</button>
   <textarea id="box" rows="1" placeholder="Command ULTRON…" aria-label="Message"></textarea>
   <button id="go" type="button">SEND</button>
 </div>
-</div>
+<input type="file" id="file" accept="image/*,video/*" multiple hidden>
 <script>
 (function(){
-  var KEY="ultron:chat";
-  var CK="ultron:code",code="";try{code=localStorage.getItem(CK)||""}catch(e){}
+  var KEY="ultron:chat",CK="ultron:code",code="";
+  try{code=localStorage.getItem(CK)||""}catch(e){}
   var IDEAS=["Explain black holes simply","Plan my week for focus","Write a Python script to rename files","Give me a bold startup idea"];
-  var log=document.getElementById("log"),hero=document.getElementById("hero"),box=document.getElementById("box"),go=document.getElementById("go");
-  var hist=[],busy=false;
+  var $=function(i){return document.getElementById(i)};
+  var log=$("log"),hero=$("hero"),box=$("box"),go=$("go"),tray=$("tray"),mic=$("mic"),file=$("file");
+  var hist=[],busy=false,pending=[],rec=null,ts=0;
   try{hist=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){hist=[]}
   if(!Array.isArray(hist))hist=[];
-  function save(){try{localStorage.setItem(KEY,JSON.stringify(hist.slice(-40)))}catch(e){}}
-  function add(role,text){var d=document.createElement("div");d.className="m "+role;d.textContent=text;log.appendChild(d);log.scrollTop=log.scrollHeight;return d}
+  function save(){try{localStorage.setItem(KEY,JSON.stringify(hist.slice(-40).map(function(h){return{role:h.role,content:h.content,tag:h.tag}})))}catch(e){}}
+  function add(role,text,tag,ui){
+    var d=document.createElement("div");d.className="m "+role;
+    if(ui&&ui.length){
+      var th=document.createElement("div");th.className="th";
+      ui.forEach(function(u){
+        if(u.k==="a"){var a=document.createElement("audio");a.controls=true;a.src=u.u;d.appendChild(a)}
+        else{var im=document.createElement("img");im.src=u.u;th.appendChild(im)}
+      });
+      if(th.children.length)d.insertBefore(th,d.firstChild);
+    }else if(tag){var t=document.createElement("div");t.className="tg";t.textContent=tag;d.appendChild(t)}
+    var s=document.createElement("span");s.textContent=text;d.appendChild(s);
+    log.appendChild(d);log.scrollTop=log.scrollHeight;return d;
+  }
+  function say(t){add("bot",t).classList.add("err")}
   function grow(){box.style.height="auto";box.style.height=Math.min(box.scrollHeight,140)+"px"}
   function render(){
     Array.prototype.slice.call(log.querySelectorAll(".m")).forEach(function(n){n.remove()});
-    hist.forEach(function(h){add(h.role==="user"?"user":"bot",h.content)});
+    hist.forEach(function(h){add(h.role==="user"?"user":"bot",h.content,h.tag)});
     hero.hidden=hist.length>0;
   }
+  function b64(blob){return new Promise(function(ok,no){var r=new FileReader();r.onload=function(){ok(String(r.result).split(",")[1])};r.onerror=no;r.readAsDataURL(blob)})}
+  function jpeg(src,w,h,max,q){
+    var s=Math.min(1,max/Math.max(w,h)),c=document.createElement("canvas");
+    c.width=Math.round(w*s);c.height=Math.round(h*s);
+    c.getContext("2d").drawImage(src,0,0,c.width,c.height);
+    return new Promise(function(ok){c.toBlob(ok,"image/jpeg",q)});
+  }
+  async function doImage(f){
+    var bm=await createImageBitmap(f),b=await jpeg(bm,bm.width,bm.height,1280,.82);
+    return{k:"i",label:"Photo",mime:"image/jpeg",data:[await b64(b)],url:URL.createObjectURL(b)};
+  }
+  async function doVideo(f){
+    var u=URL.createObjectURL(f),v=document.createElement("video");
+    v.muted=true;v.playsInline=true;v.preload="auto";v.src=u;
+    await new Promise(function(ok,no){v.onloadeddata=ok;v.onerror=no});
+    var n=6,fr=[],th=null,d=v.duration||1;
+    for(var i=0;i<n;i++){
+      v.currentTime=Math.min(d-.05,d*(i+.5)/n);
+      await new Promise(function(ok){v.onseeked=ok});
+      var b=await jpeg(v,v.videoWidth,v.videoHeight,640,.7);
+      if(!th)th=URL.createObjectURL(b);
+      fr.push(await b64(b));
+    }
+    URL.revokeObjectURL(u);
+    return{k:"v",label:"Video",mime:"image/jpeg",data:fr,url:th,note:"The "+n+" attached images are frames sampled evenly in time from one video the user shared. Describe what happens in it."};
+  }
+  async function toWav(blob){
+    var ctx=new (window.AudioContext||window.webkitAudioContext)();
+    var buf=await ctx.decodeAudioData(await blob.arrayBuffer());ctx.close();
+    var rate=16000,len=Math.ceil(buf.duration*rate),off=new OfflineAudioContext(1,len,rate),src=off.createBufferSource();
+    src.buffer=buf;src.connect(off.destination);src.start();
+    var pcm=(await off.startRendering()).getChannelData(0),o=new DataView(new ArrayBuffer(44+len*2));
+    function w(p,s){for(var i=0;i<s.length;i++)o.setUint8(p+i,s.charCodeAt(i))}
+    w(0,"RIFF");o.setUint32(4,36+len*2,true);w(8,"WAVE");w(12,"fmt ");o.setUint32(16,16,true);o.setUint16(20,1,true);o.setUint16(22,1,true);
+    o.setUint32(24,rate,true);o.setUint32(28,rate*2,true);o.setUint16(32,2,true);o.setUint16(34,16,true);w(36,"data");o.setUint32(40,len*2,true);
+    for(var i=0;i<len;i++){var s=Math.max(-1,Math.min(1,pcm[i]));o.setInt16(44+i*2,s<0?s*32768:s*32767,true)}
+    return new Blob([o],{type:"audio/wav"});
+  }
+  function draw(){
+    tray.textContent="";
+    pending.forEach(function(p,i){
+      var c=document.createElement("div");c.className="chip2";
+      if(p.k!=="a"&&p.url){var im=document.createElement("img");im.src=p.url;c.appendChild(im)}
+      var t=document.createElement("span");t.textContent=p.label;c.appendChild(t);
+      var x=document.createElement("button");x.type="button";x.textContent="✕";x.setAttribute("aria-label","Remove");
+      x.onclick=function(){pending.splice(i,1);draw()};c.appendChild(x);tray.appendChild(c);
+    });
+  }
+  $("att").onclick=function(){file.click()};
+  file.onchange=async function(){
+    var fs=Array.prototype.slice.call(file.files);file.value="";
+    for(var j=0;j<fs.length;j++){
+      if(pending.length>=4){say("Up to 4 attachments per message.");break}
+      try{pending.push(fs[j].type.indexOf("video")===0?await doVideo(fs[j]):await doImage(fs[j]));draw()}
+      catch(e){say("Couldn’t read that file. Try a different one.")}
+    }
+  };
+  mic.onclick=async function(){
+    if(rec){rec.stop();return}
+    if(!navigator.mediaDevices||!window.MediaRecorder){say("Recording isn’t supported in this browser.");return}
+    try{
+      var st=await navigator.mediaDevices.getUserMedia({audio:true}),ch=[],mr=new MediaRecorder(st),t0=Date.now();
+      mr.ondataavailable=function(e){if(e.data.size)ch.push(e.data)};
+      mr.onstop=async function(){
+        st.getTracks().forEach(function(t){t.stop()});clearTimeout(ts);rec=null;mic.classList.remove("rec");
+        var sec=Math.round((Date.now()-t0)/1000);
+        try{
+          var wav=await toWav(new Blob(ch,{type:mr.mimeType}));
+          pending=pending.filter(function(p){return p.k!=="a"});
+          pending.push({k:"a",label:"Voice "+Math.floor(sec/60)+":"+("0"+sec%60).slice(-2),mime:"audio/wav",data:[await b64(wav)],url:URL.createObjectURL(wav)});
+          draw();
+        }catch(e){say("Couldn’t process that recording. Try again.")}
+      };
+      mr.start();rec=mr;mic.classList.add("rec");
+      ts=setTimeout(function(){if(rec)rec.stop()},60000);
+    }catch(e){say("Microphone access was blocked. Allow it in Chrome’s site settings and try again.")}
+  };
   async function ask(text){
     text=(text||"").trim();
-    if(!text||busy)return;
+    if((!text&&!pending.length)||busy||rec)return;
     busy=true;go.disabled=true;box.value="";grow();hero.hidden=true;
-    hist.push({role:"user",content:text});add("user",text);
+    var att=pending;pending=[];draw();
+    var media=[],notes=[],tags=[],ui=[],hasA=false;
+    att.forEach(function(p){
+      p.data.forEach(function(d){media.push({mime:p.mime,data:d})});
+      if(p.note)notes.push(p.note);
+      tags.push(p.k==="a"?"🎤 Voice message":p.k==="v"?"🎞️ Video":"📷 Photo");
+      ui.push({k:p.k==="a"?"a":"i",u:p.url});
+      if(p.k==="a")hasA=true;
+    });
+    var sent=text;
+    if(hasA)sent="The user sent a voice message. Begin your reply with “You said: ” and an accurate transcript in the original language, then answer it."+(text?" The user also typed: "+text:"");
+    else if(!text)sent="What do you see? Describe it and point out anything notable.";
+    if(notes.length)sent+="\n\n"+notes.join(" ");
+    var item={role:"user",content:text,tag:tags.join(" · "),ask:sent,media:media.length?media:null};
+    if(item.media)hist.forEach(function(h){h.media=null});
+    hist.push(item);add("user",text,item.tag,ui);
     var el=add("bot","Thinking…");el.classList.add("think");
     try{
-      var msgs=hist.slice(-20).map(function(h){return{role:h.role,content:h.content}});
+      var last=-1;hist.forEach(function(h,i){if(h.media)last=i});
+      var msgs=hist.map(function(h,i){
+        var m={role:h.role,content:(h.ask||h.content||h.tag||"(attachment)")+(h.tag&&!h.media&&h.role==="user"?" [earlier attachment not included]":"")};
+        if(h.media&&i===last)m.media=h.media;
+        return m;
+      }).slice(-20);
       while(msgs.length&&msgs[0].role!=="user")msgs.shift();
       var post=function(){return fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({messages:msgs})})};
       var res=await post();
       if(res.status===401){code=(prompt("Enter your access code")||"").trim();try{localStorage.setItem(CK,code)}catch(e){}res=await post()}
-      if(!res.ok){var er=new Error("http");er.code=res.status===429?"rate_limited":res.status===401?"auth":"http";throw er}
-      var r=await res.json();
-      var out=r.text||"…";
-      el.classList.remove("think");el.textContent=out;
+      if(!res.ok){var er=new Error("http");er.code=res.status===429?"rate_limited":res.status===401?"auth":res.status===413?"big":"http";throw er}
+      var r=await res.json(),out=r.text||"…";
+      el.classList.remove("think");el.lastChild.textContent=out;
       hist.push({role:"assistant",content:out});save();
     }catch(e){
       el.classList.remove("think");el.classList.add("err");
-      el.textContent=e&&e.code==="rate_limited"?"Too many requests. Give me a moment, then try again.":e&&e.code==="auth"?"Wrong access code. Send your message again to retry.":"Can’t reach ULTRON. Check your connection and try again.";
-      hist.pop();
+      el.lastChild.textContent=e&&e.code==="rate_limited"?"Too many requests. Give me a moment, then try again.":e&&e.code==="auth"?"Wrong access code. Send your message again to retry.":e&&e.code==="big"?"That is too much to send at once. Try fewer or shorter attachments.":"Can’t reach ULTRON. Check your connection and try again.";
+      hist.pop();if(att.length){pending=att;draw()}
     }finally{busy=false;go.disabled=false}
   }
-  IDEAS.forEach(function(t){var b=document.createElement("button");b.type="button";b.className="chip";b.textContent=t;b.onclick=function(){ask(t)};document.getElementById("chips").appendChild(b)});
+  IDEAS.forEach(function(t){var b=document.createElement("button");b.type="button";b.className="chip";b.textContent=t;b.onclick=function(){ask(t)};$("chips").appendChild(b)});
   go.onclick=function(){ask(box.value)};
   box.addEventListener("input",grow);
   box.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();ask(box.value)}});
-  document.getElementById("clr").onclick=function(){if(busy)return;hist=[];save();render()};
+  $("clr").onclick=function(){if(busy||rec)return;hist=[];pending=[];draw();save();render()};
   render();
 })();
 </script>
