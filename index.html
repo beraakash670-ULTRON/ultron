@@ -80,6 +80,10 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .face{display:block;width:min(58vw,230px);aspect-ratio:3/4;object-fit:cover;border-radius:18px;margin:0 auto 14px;border:1px solid var(--line);box-shadow:0 0 40px color-mix(in srgb,var(--accent) 40%,transparent)}
 .av{width:34px;height:34px;border-radius:50%;object-fit:cover;object-position:50% 25%;border:2px solid var(--accent);box-shadow:0 0 10px color-mix(in srgb,var(--accent) 60%,transparent)}
 .face[hidden],.av[hidden]{display:none}
+.hb{margin-left:auto;display:flex;gap:6px}
+.hb button{margin-left:0;padding:4px 9px}
+.row{display:flex;gap:16px}
+@media(max-width:400px){h1{letter-spacing:.18em;font-size:16px}.st{display:none}}
 </style>
 </head>
 <body>
@@ -89,7 +93,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   <img id="ha" class="av" hidden alt="">
   <h1>ULTRON</h1>
   <span class="st" id="st">ONLINE</span>
-  <button class="ghost" id="clr" type="button">Clear</button>
+  <div class="hb"><button class="ghost" id="vo" type="button" aria-label="Voice on or off">🔊</button><button class="ghost" id="vc" type="button" aria-label="Change voice">🎙</button><button class="ghost" id="clr" type="button">Clear</button></div>
 </header>
 <div id="log">
   <div id="hero">
@@ -196,7 +200,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     }
   };
   mic.onclick=async function(){
-    if(rec){rec.stop();return}
+    hush();if(rec){rec.stop();return}
     if(!navigator.mediaDevices||!window.MediaRecorder){say("Recording isn’t supported in this browser.");return}
     try{
       var st=await navigator.mediaDevices.getUserMedia({audio:true}),ch=[],mr=new MediaRecorder(st),t0=Date.now();
@@ -215,6 +219,31 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
       ts=setTimeout(function(){if(rec)rec.stop()},60000);
     }catch(e){say("Microphone access was blocked. Allow it in Chrome’s site settings and try again.")}
   };
+  var voiceOn=true,vIdx=0;
+  try{voiceOn=localStorage.getItem("ultron:voice")!=="off";vIdx=+localStorage.getItem("ultron:vi")||0}catch(e){}
+  try{speechSynthesis.getVoices()}catch(e){}
+  function hush(){try{speechSynthesis.cancel()}catch(e){}}
+  function voices(s){
+    var l=/[\u0900-\u097F]/.test(s)?"hi":"en";
+    try{return speechSynthesis.getVoices().filter(function(v){return v.lang.toLowerCase().replace("_","-").indexOf(l)===0})}catch(e){return[]}
+  }
+  function talk(text){
+    if(!window.speechSynthesis)return;
+    var s=text.replace(/```[\s\S]*?```/g," Code omitted. ").replace(/https?:\/\/\S+/g," link ").replace(/[*_`#>•]/g,"").replace(/\s+/g," ").trim();
+    if(!s)return;
+    hush();
+    var vs=voices(s),v=vs.length?vs[vIdx%vs.length]:null,parts=[],cur="";
+    (s.match(/[^.!?।]+[.!?।]*\s*/g)||[s]).forEach(function(x){if(cur&&(cur+x).length>180){parts.push(cur);cur=x}else cur+=x});
+    if(cur)parts.push(cur);
+    parts=parts.reduce(function(o,p){while(p.length>220){var i=p.lastIndexOf(" ",200);if(i<50)i=200;o.push(p.slice(0,i));p=p.slice(i)}o.push(p);return o},[]);
+    setTimeout(function(){
+      parts.forEach(function(p){
+        var u=new SpeechSynthesisUtterance(p);
+        if(v){u.voice=v;u.lang=v.lang}else u.lang=/[\u0900-\u097F]/.test(s)?"hi-IN":"en-US";
+        u.pitch=.5;u.rate=.9;speechSynthesis.speak(u);
+      });
+    },80);
+  }
   function stat(s){$("st").textContent=s}
   function inl(p,s){
     s.split(/(\*\*[^*]+\*\*|`[^`]+`)/).forEach(function(x){
@@ -243,7 +272,9 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
       (navigator.clipboard?navigator.clipboard.writeText(s):Promise.reject()).then(function(){b.textContent="Copied ✓"},function(){b.textContent="Press and hold the text to copy"});
       setTimeout(function(){b.textContent="Copy"},1800);
     };
-    d.appendChild(b);
+    var sp=document.createElement("button");sp.type="button";sp.className="cp";sp.textContent="🔊 Speak";
+    sp.onclick=function(){talk(s)};
+    var row=document.createElement("div");row.className="row";row.appendChild(b);row.appendChild(sp);d.appendChild(row);
   }
   function needCode(msg){
     return new Promise(function(ok){
@@ -288,7 +319,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   async function ask(text){
     text=(text||"").trim();
     if((!text&&!pending.length)||busy||rec)return;
-    busy=true;go.disabled=true;box.value="";grow();hero.hidden=true;stat("WORKING");
+    hush();busy=true;go.disabled=true;box.value="";grow();hero.hidden=true;stat("WORKING");
     var att=pending;pending=[];draw();
     var media=[],notes=[],tags=[],ui=[],hasA=false;
     att.forEach(function(p){
@@ -324,7 +355,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
         var er=new Error("http");er.code=res.status===429?"rate_limited":res.status===401?"auth":res.status===413?"big":"http";er.detail=j0.error;throw er;
       }
       var r=await res.json(),out=r.text||"…";
-      clearInterval(tk);el.classList.remove("think");fill(el,out);
+      clearInterval(tk);el.classList.remove("think");fill(el,out);if(voiceOn)talk(out);
       if(el.offsetHeight>log.clientHeight*.8)el.scrollIntoView({block:"start"});else log.scrollTop=log.scrollHeight;
       hist.push({role:"assistant",content:out});save();
     }catch(e){
@@ -346,13 +377,26 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     if(busy||rec||!hist.length)return;
     var b=$("clr");
     if(!cc){b.textContent="Tap to confirm";cc=setTimeout(function(){cc=0;b.textContent="Clear"},3000);return}
-    clearTimeout(cc);cc=0;b.textContent="Clear";hist=[];pending=[];draw();save();render();
+    clearTimeout(cc);cc=0;b.textContent="Clear";hush();hist=[];pending=[];draw();save();render();
+  };
+  var vo=$("vo");vo.textContent=voiceOn?"🔊":"🔇";
+  vo.onclick=function(){
+    voiceOn=!voiceOn;vo.textContent=voiceOn?"🔊":"🔇";
+    try{localStorage.setItem("ultron:voice",voiceOn?"on":"off")}catch(e){}
+    if(voiceOn)talk("Voice online.");else hush();
+  };
+  $("vc").onclick=function(){
+    var n=voices("a").length;
+    if(!n){stat("NO VOICES");setTimeout(function(){stat(navigator.onLine?"ONLINE":"OFFLINE")},1800);return}
+    vIdx=(vIdx+1)%n;try{localStorage.setItem("ultron:vi",vIdx)}catch(e){}
+    stat("VOICE "+(vIdx+1)+"/"+n);setTimeout(function(){stat(navigator.onLine?"ONLINE":"OFFLINE")},1800);
+    talk("Ultron online. Is this voice acceptable?");
   };
   render();
   if(!navigator.onLine)stat("OFFLINE");
   addEventListener("offline",function(){stat("OFFLINE")});
   addEventListener("online",function(){stat("ONLINE");warm()});
-  document.addEventListener("visibilitychange",function(){if(document.hidden){if(rec)rec.stop()}else warm()});
+  document.addEventListener("visibilitychange",function(){if(document.hidden){hush();if(rec)rec.stop()}else warm()});
   warm();
 })();
 </script>
