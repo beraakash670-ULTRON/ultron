@@ -16,12 +16,49 @@ const FILES = {
   "/icon-512.png": ["icon-512.png", "image/png"]
 };
 const OK = ["image/jpeg", "image/png", "image/webp", "audio/wav"];
+const TTS_MODELS = process.env.TTS_MODEL ? [process.env.TTS_MODEL] : ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
+const TTS_VOICE = process.env.TTS_VOICE || "Algenib";
 const hits = new Map();
 function limited(ip) {
   const now = Date.now();
   const a = (hits.get(ip) || []).filter(t => now - t < 60000);
   a.push(now); hits.set(ip, a);
   return a.length > 20; // 20 requests per minute per IP
+}
+
+function wav(pcm, rate) {
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + pcm.length, 4); h.write("WAVEfmt ", 8); h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28);
+  h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34); h.write("data", 36); h.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([h, pcm]);
+}
+
+// Gemini speech: a deep, slow, menacing delivery. Tries each TTS model in turn.
+async function speak(text) {
+  let last = { status: 502, error: "no audio returned" };
+  for (const model of TTS_MODELS) {
+    const r = await fetch(`${BASE}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": KEY },
+      signal: AbortSignal.timeout(45000),
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: "Say in a cold, slow, dry, menacing, theatrical voice: " + text }] }],
+        generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: TTS_VOICE } } } }
+      })
+    });
+    const data = await r.json().catch(() => ({}));
+    const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+    const part = parts.find(p => p.inlineData || p.inline_data);
+    const inl = part && (part.inlineData || part.inline_data);
+    if (r.ok && inl && inl.data) {
+      const m = /rate=(\d+)/.exec(inl.mimeType || inl.mime_type || "");
+      return { status: 200, audio: wav(Buffer.from(inl.data, "base64"), m ? +m[1] : 24000) };
+    }
+    last = { status: r.ok ? 502 : r.status, error: (data.error && data.error.message) || "no audio returned" };
+    console.error("tts", model, last.status, last.error);
+  }
+  return last;
 }
 
 // Tries each model in turn if one is unavailable or out of free quota.
@@ -68,13 +105,23 @@ http.createServer(async (req, res) => {
       res.end(data);
     });
   }
-  if (req.method !== "POST" || url !== "/chat") return send(404, { error: "not found" });
+  if (req.method !== "POST" || (url !== "/chat" && url !== "/speak")) return send(404, { error: "not found" });
   if (TOKEN && req.headers["x-app-token"] !== TOKEN) return send(401, { error: "unauthorized" });
   const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
   if (limited(ip)) return send(429, { error: "rate limited" });
 
   let body = "";
   for await (const c of req) { body += c; if (body.length > 15000000) return send(413, { error: "too large" }); }
+  if (url === "/speak") {
+    try {
+      const text = String(JSON.parse(body).text || "").slice(0, 900);
+      if (!text.trim()) return send(400, { error: "no text" });
+      const out = await speak(text);
+      if (out.status !== 200) return send(502, { error: out.error });
+      res.writeHead(200, { "Content-Type": "audio/wav", "Cache-Control": "no-store" });
+      return res.end(out.audio);
+    } catch (e) { console.error(e); return send(500, { error: "server error" }); }
+  }
   try {
     let msgs = (JSON.parse(body).messages || []).slice(-20).map(m => ({
       role: m.role === "assistant" ? "assistant" : "user",

@@ -219,22 +219,41 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
       ts=setTimeout(function(){if(rec)rec.stop()},60000);
     }catch(e){say("Microphone access was blocked. Allow it in Chrome’s site settings and try again.")}
   };
-  var voiceOn=true,vIdx=0;
-  try{voiceOn=localStorage.getItem("ultron:voice")!=="off";vIdx=+localStorage.getItem("ultron:vi")||0}catch(e){}
+  var voiceOn=true,vIdx=0,gen=0,cur=null,actx=null;
+  try{voiceOn=localStorage.getItem("ultron:voice")!=="off";vIdx=+localStorage.getItem("ultron:vm")||0}catch(e){}
   try{speechSynthesis.getVoices()}catch(e){}
-  function hush(){try{speechSynthesis.cancel()}catch(e){}}
+  function hush(){gen++;try{speechSynthesis.cancel()}catch(e){}if(cur){try{cur.stop()}catch(e){}cur=null}}
   function voices(s){
     var l=/[\u0900-\u097F]/.test(s)?"hi":"en";
     try{return speechSynthesis.getVoices().filter(function(v){return v.lang.toLowerCase().replace("_","-").indexOf(l)===0})}catch(e){return[]}
   }
-  function talk(text){
-    if(!window.speechSynthesis)return;
-    var s=text.replace(/```[\s\S]*?```/g," Code omitted. ").replace(/https?:\/\/\S+/g," link ").replace(/[*_`#>•]/g,"").replace(/\s+/g," ").trim();
-    if(!s)return;
-    hush();
-    var vs=voices(s),v=vs.length?vs[vIdx%vs.length]:null,parts=[],cur="";
-    (s.match(/[^.!?।]+[.!?।]*\s*/g)||[s]).forEach(function(x){if(cur&&(cur+x).length>180){parts.push(cur);cur=x}else cur+=x});
-    if(cur)parts.push(cur);
+  function clean(t){return t.replace(/```[\s\S]*?```/g," Code omitted. ").replace(/https?:\/\/\S+/g," link ").replace(/[*_`#>•]/g,"").replace(/\s+/g," ").trim()}
+  // Studio voice: Gemini speech from the server, then a robotic colour added with Web Audio.
+  async function studio(s,g){
+    var r=await fetch("/speak",{method:"POST",headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({text:s})});
+    if(!r.ok)throw new Error("tts");
+    var raw=await r.arrayBuffer();
+    if(g!==gen)return;
+    actx=actx||new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state==="suspended")await actx.resume();
+    var buf=await actx.decodeAudioData(raw);
+    if(g!==gen)return;
+    var src=actx.createBufferSource();src.buffer=buf;src.playbackRate.value=.93;
+    var out=actx.createGain(),dry=actx.createGain(),ring=actx.createGain(),wet=actx.createGain(),osc=actx.createOscillator(),dl=actx.createDelay(.1),fb=actx.createGain(),echo=actx.createGain();
+    dry.gain.value=.85;ring.gain.value=0;wet.gain.value=.22;osc.frequency.value=55;dl.delayTime.value=.028;fb.gain.value=.35;echo.gain.value=.25;
+    osc.connect(ring.gain);
+    src.connect(dry);src.connect(ring);ring.connect(wet);
+    dry.connect(dl);dl.connect(fb);fb.connect(dl);dl.connect(echo);
+    dry.connect(out);wet.connect(out);echo.connect(out);out.connect(actx.destination);
+    cur=src;osc.start();
+    await new Promise(function(ok){src.onended=ok;src.start()});
+    try{osc.stop()}catch(e){}
+    if(cur===src)cur=null;
+  }
+  function phone(s){
+    var vs=voices(s),v=vs.length?vs[(vIdx>0?vIdx-1:0)%vs.length]:null,parts=[],cur2="";
+    (s.match(/[^.!?।]+[.!?।]*\s*/g)||[s]).forEach(function(x){if(cur2&&(cur2+x).length>180){parts.push(cur2);cur2=x}else cur2+=x});
+    if(cur2)parts.push(cur2);
     parts=parts.reduce(function(o,p){while(p.length>220){var i=p.lastIndexOf(" ",200);if(i<50)i=200;o.push(p.slice(0,i));p=p.slice(i)}o.push(p);return o},[]);
     setTimeout(function(){
       parts.forEach(function(p){
@@ -243,6 +262,14 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
         u.pitch=.5;u.rate=.9;speechSynthesis.speak(u);
       });
     },80);
+  }
+  function talk(text){
+    var s=clean(text);if(!s)return;
+    hush();var g=gen;
+    if(vIdx===0){
+      var sh=s.length>700?(s.slice(0,700).replace(/[^.!?।]*$/,"")||s.slice(0,700)):s;
+      studio(sh,g).catch(function(){if(g===gen&&window.speechSynthesis)phone(s)});
+    }else if(window.speechSynthesis)phone(s);
   }
   function stat(s){$("st").textContent=s}
   function inl(p,s){
@@ -386,10 +413,10 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     if(voiceOn)talk("Voice online.");else hush();
   };
   $("vc").onclick=function(){
-    var n=voices("a").length;
-    if(!n){stat("NO VOICES");setTimeout(function(){stat(navigator.onLine?"ONLINE":"OFFLINE")},1800);return}
-    vIdx=(vIdx+1)%n;try{localStorage.setItem("ultron:vi",vIdx)}catch(e){}
-    stat("VOICE "+(vIdx+1)+"/"+n);setTimeout(function(){stat(navigator.onLine?"ONLINE":"OFFLINE")},1800);
+    var n=voices("a").length+1;
+    vIdx=(vIdx+1)%n;try{localStorage.setItem("ultron:vm",vIdx)}catch(e){}
+    stat(vIdx?"PHONE VOICE "+vIdx+"/"+(n-1):"STUDIO VOICE");
+    setTimeout(function(){stat(navigator.onLine?"ONLINE":"OFFLINE")},1800);
     talk("Ultron online. Is this voice acceptable?");
   };
   render();
