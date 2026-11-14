@@ -77,18 +77,23 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 #le{min-height:22px;color:var(--accent);font-size:14px;margin:8px 0}
 #lb{width:100%;background:var(--accent);color:var(--accent-ink);border:0;border-radius:12px;padding:12px;font-weight:700;letter-spacing:.08em}
 #lx{background:none;border:0;color:var(--mute);margin-top:10px;font-size:14px}
+.face{display:block;width:min(58vw,230px);aspect-ratio:3/4;object-fit:cover;border-radius:18px;margin:0 auto 14px;border:1px solid var(--line);box-shadow:0 0 40px color-mix(in srgb,var(--accent) 40%,transparent)}
+.av{width:34px;height:34px;border-radius:50%;object-fit:cover;object-position:50% 25%;border:2px solid var(--accent);box-shadow:0 0 10px color-mix(in srgb,var(--accent) 60%,transparent)}
+.face[hidden],.av[hidden]{display:none}
 </style>
 </head>
 <body>
 <div id="lock" hidden><div class="lk"><div class="w">ULTRON</div><p>Enter your access code</p><input id="lc" type="password" autocomplete="off" aria-label="Access code"><div id="le"></div><button id="lb" type="button">UNLOCK</button><button id="lx" type="button">Not now</button></div></div>
 <header>
   <div class="eye"></div>
+  <img id="ha" class="av" hidden alt="">
   <h1>ULTRON</h1>
   <span class="st" id="st">ONLINE</span>
   <button class="ghost" id="clr" type="button">Clear</button>
 </header>
 <div id="log">
   <div id="hero">
+    <img id="hf" class="face" hidden alt="">
     <div class="w">ULTRON</div>
     <p>Type, speak with 🎤, or show me photos and videos with 📎.</p>
     <div class="chips" id="chips"></div>
@@ -255,10 +260,18 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     if(v===null)return false;
     code=v;try{localStorage.setItem(CK,code)}catch(e){}
     var j=await fetch("/ping",{headers:{"x-app-token":code},cache:"no-store"}).then(function(r){return r.json()}).catch(function(){return{auth:true}});
-    return j.auth===false?unlock("Wrong code. Try again."):true;
+    if(j.auth===false)return unlock("Wrong code. Try again.");face();return true;
+  }
+  function face(){
+    if(!$("ha").hidden)return Promise.resolve();
+    return fetch("/face.jpg",{headers:{"x-app-token":code}}).then(function(r){return r.ok?r.blob():null}).then(function(b){
+      if(!b)return;var u=URL.createObjectURL(b);
+      ["hf","ha"].forEach(function(i){var im=$(i);im.src=u;im.hidden=false});
+      document.querySelector(".eye").hidden=true;
+    }).catch(function(){});
   }
   function warm(){
-    return fetch("/ping",{headers:{"x-app-token":code},cache:"no-store"}).then(function(r){return r.json()}).then(function(j){if(j&&j.auth===false)return unlock("")}).catch(function(){});
+    return fetch("/ping",{headers:{"x-app-token":code},cache:"no-store"}).then(function(r){return r.json()}).then(function(j){return j&&j.auth===false?unlock(""):face()}).catch(function(){});
   }
   async function send(msgs,onWake){
     for(var n=0;n<2;n++){

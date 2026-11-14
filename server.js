@@ -51,6 +51,14 @@ async function askGemini(msgs) {
 http.createServer(async (req, res) => {
   const send = (code, obj) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(obj)); };
   const url = req.url.split("?")[0];
+  if (req.method === "GET" && url === "/face.jpg") {
+    if (TOKEN && req.headers["x-app-token"] !== TOKEN) return send(401, { error: "unauthorized" });
+    return fs.readFile(path.join(__dirname, "face.jpg"), (err, data) => {
+      if (err) return send(404, { error: "missing file" });
+      res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=86400" });
+      res.end(data);
+    });
+  }
   if (req.method === "GET" && url === "/ping") return send(200, { ok: true, auth: !TOKEN || req.headers["x-app-token"] === TOKEN });
   if (req.method === "GET" && FILES[url]) {
     const [f, type] = FILES[url];
