@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>ULTRON</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0b0708">
@@ -57,13 +57,34 @@ textarea:focus{border-color:var(--accent)}
 .m .th img{width:96px;height:96px;object-fit:cover;border-radius:8px}
 .m .tg{font-size:13px;opacity:.7}
 
+
+button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+#log{overscroll-behavior:contain}
+.ib.rec{width:auto;padding:0 12px;font-size:14px}
+.m pre{background:color-mix(in srgb,var(--ink) 9%,transparent);border:1px solid var(--line);border-radius:8px;padding:8px 10px;overflow-x:auto;white-space:pre;margin:6px 0;font-size:13px}
+.m code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.92em}
+.m :not(pre)>code{background:color-mix(in srgb,var(--ink) 12%,transparent);padding:1px 5px;border-radius:5px}
+.li{padding-left:1.2em;text-indent:-1.2em}
+.cp{display:block;margin-top:6px;background:none;border:0;color:var(--mute);font-size:13px;padding:2px 0}
+.m.err .cp{color:var(--accent)}
+#lock{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:calc(24px + env(safe-area-inset-top,0px)) 24px calc(24px + env(safe-area-inset-bottom,0px))}
+#lock[hidden]{display:none}
+.lk{width:100%;max-width:340px;text-align:center}
+.lk .w{font-size:40px;font-weight:800;letter-spacing:.2em;color:var(--accent)}
+.lk p{color:var(--mute);margin:6px 0 16px}
+#lc{width:100%;box-sizing:border-box;font-size:16px;text-align:center;letter-spacing:.15em;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;outline:none}
+#lc:focus{border-color:var(--accent)}
+#le{min-height:22px;color:var(--accent);font-size:14px;margin:8px 0}
+#lb{width:100%;background:var(--accent);color:var(--accent-ink);border:0;border-radius:12px;padding:12px;font-weight:700;letter-spacing:.08em}
+#lx{background:none;border:0;color:var(--mute);margin-top:10px;font-size:14px}
 </style>
 </head>
 <body>
+<div id="lock" hidden><div class="lk"><div class="w">ULTRON</div><p>Enter your access code</p><input id="lc" type="password" autocomplete="off" aria-label="Access code"><div id="le"></div><button id="lb" type="button">UNLOCK</button><button id="lx" type="button">Not now</button></div></div>
 <header>
   <div class="eye"></div>
   <h1>ULTRON</h1>
-  <span class="st">ONLINE</span>
+  <span class="st" id="st">ONLINE</span>
   <button class="ghost" id="clr" type="button">Clear</button>
 </header>
 <div id="log">
@@ -88,7 +109,7 @@ textarea:focus{border-color:var(--accent)}
   var IDEAS=["Explain black holes simply","Plan my week for focus","Write a Python script to rename files","Give me a bold startup idea"];
   var $=function(i){return document.getElementById(i)};
   var log=$("log"),hero=$("hero"),box=$("box"),go=$("go"),tray=$("tray"),mic=$("mic"),file=$("file");
-  var hist=[],busy=false,pending=[],rec=null,ts=0;
+  var hist=[],busy=false,pending=[],rec=null,ts=0,mt=0,cc=0,touch=matchMedia("(pointer:coarse)").matches;
   try{hist=JSON.parse(localStorage.getItem(KEY)||"[]")}catch(e){hist=[]}
   if(!Array.isArray(hist))hist=[];
   function save(){try{localStorage.setItem(KEY,JSON.stringify(hist.slice(-40).map(function(h){return{role:h.role,content:h.content,tag:h.tag}})))}catch(e){}}
@@ -102,14 +123,14 @@ textarea:focus{border-color:var(--accent)}
       });
       if(th.children.length)d.insertBefore(th,d.firstChild);
     }else if(tag){var t=document.createElement("div");t.className="tg";t.textContent=tag;d.appendChild(t)}
-    var s=document.createElement("span");s.textContent=text;d.appendChild(s);
+    var s=document.createElement("div");s.className="tx";s.textContent=text;d.appendChild(s);
     log.appendChild(d);log.scrollTop=log.scrollHeight;return d;
   }
   function say(t){add("bot",t).classList.add("err")}
   function grow(){box.style.height="auto";box.style.height=Math.min(box.scrollHeight,140)+"px"}
   function render(){
     Array.prototype.slice.call(log.querySelectorAll(".m")).forEach(function(n){n.remove()});
-    hist.forEach(function(h){add(h.role==="user"?"user":"bot",h.content,h.tag)});
+    hist.forEach(function(h){var d=add(h.role==="user"?"user":"bot",h.content,h.tag);if(h.role!=="user")fill(d,h.content)});
     hero.hidden=hist.length>0;
   }
   function b64(blob){return new Promise(function(ok,no){var r=new FileReader();r.onload=function(){ok(String(r.result).split(",")[1])};r.onerror=no;r.readAsDataURL(blob)})}
@@ -176,7 +197,7 @@ textarea:focus{border-color:var(--accent)}
       var st=await navigator.mediaDevices.getUserMedia({audio:true}),ch=[],mr=new MediaRecorder(st),t0=Date.now();
       mr.ondataavailable=function(e){if(e.data.size)ch.push(e.data)};
       mr.onstop=async function(){
-        st.getTracks().forEach(function(t){t.stop()});clearTimeout(ts);rec=null;mic.classList.remove("rec");
+        st.getTracks().forEach(function(t){t.stop()});clearTimeout(ts);clearInterval(mt);mic.textContent="🎤";rec=null;mic.classList.remove("rec");
         var sec=Math.round((Date.now()-t0)/1000);
         try{
           var wav=await toWav(new Blob(ch,{type:mr.mimeType}));
@@ -185,14 +206,76 @@ textarea:focus{border-color:var(--accent)}
           draw();
         }catch(e){say("Couldn’t process that recording. Try again.")}
       };
-      mr.start();rec=mr;mic.classList.add("rec");
+      mr.start();rec=mr;mic.classList.add("rec");var s0=Date.now();mic.textContent="⏹ 0:00";mt=setInterval(function(){var s=Math.round((Date.now()-s0)/1000);mic.textContent="⏹ "+Math.floor(s/60)+":"+("0"+s%60).slice(-2)},500);
       ts=setTimeout(function(){if(rec)rec.stop()},60000);
     }catch(e){say("Microphone access was blocked. Allow it in Chrome’s site settings and try again.")}
   };
+  function stat(s){$("st").textContent=s}
+  function inl(p,s){
+    s.split(/(\*\*[^*]+\*\*|`[^`]+`)/).forEach(function(x){
+      var n;
+      if(/^\*\*[^*]+\*\*$/.test(x)){n=document.createElement("strong");n.textContent=x.slice(2,-2)}
+      else if(/^`[^`]+`$/.test(x)){n=document.createElement("code");n.textContent=x.slice(1,-1)}
+      else n=document.createTextNode(x);
+      p.appendChild(n);
+    });
+  }
+  function md(el,s){
+    s.split("```").forEach(function(seg,i){
+      if(i%2){var pre=document.createElement("pre"),c=document.createElement("code");c.textContent=seg.replace(/^[^\n]*\n/,"").replace(/\n+$/,"");pre.appendChild(c);el.appendChild(pre);return}
+      var prev=false;
+      seg.replace(/^\n+|\n+$/g,"").split("\n").forEach(function(line){
+        var m=/^\s*([-*•]|\d+\.)\s+(.*)$/.exec(line);
+        if(m){var li=document.createElement("div");li.className="li";inl(li,(/\d/.test(m[1])?m[1]:"•")+" "+m[2]);el.appendChild(li);prev=false}
+        else{if(prev)el.appendChild(document.createTextNode("\n"));inl(el,line);prev=true}
+      });
+    });
+  }
+  function fill(d,s){
+    var tx=d.querySelector(".tx");tx.textContent="";md(tx,s);
+    var b=document.createElement("button");b.type="button";b.className="cp";b.textContent="Copy";
+    b.onclick=function(){
+      (navigator.clipboard?navigator.clipboard.writeText(s):Promise.reject()).then(function(){b.textContent="Copied ✓"},function(){b.textContent="Press and hold the text to copy"});
+      setTimeout(function(){b.textContent="Copy"},1800);
+    };
+    d.appendChild(b);
+  }
+  function needCode(msg){
+    return new Promise(function(ok){
+      var l=$("lock"),i=$("lc");
+      $("le").textContent=msg||"";i.value="";l.hidden=false;setTimeout(function(){i.focus()},50);
+      function done(v){l.hidden=true;ok(v)}
+      $("lb").onclick=function(){var v=i.value.trim();if(v)done(v)};
+      $("lx").onclick=function(){done(null)};
+      i.onkeydown=function(e){if(e.key==="Enter")$("lb").onclick()};
+    });
+  }
+  async function unlock(msg){
+    var v=await needCode(msg);
+    if(v===null)return false;
+    code=v;try{localStorage.setItem(CK,code)}catch(e){}
+    var j=await fetch("/ping",{headers:{"x-app-token":code},cache:"no-store"}).then(function(r){return r.json()}).catch(function(){return{auth:true}});
+    return j.auth===false?unlock("Wrong code. Try again."):true;
+  }
+  function warm(){
+    return fetch("/ping",{headers:{"x-app-token":code},cache:"no-store"}).then(function(r){return r.json()}).then(function(j){if(j&&j.auth===false)return unlock("")}).catch(function(){});
+  }
+  async function send(msgs,onWake){
+    for(var n=0;n<2;n++){
+      var ac=new AbortController(),to=setTimeout(function(){ac.abort()},75000);
+      try{
+        var r=await fetch("/chat",{method:"POST",signal:ac.signal,headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({messages:msgs})});
+        clearTimeout(to);
+        if(n||r.status<502||r.status>504)return r;
+      }catch(e){clearTimeout(to);if(n)throw e}
+      onWake();
+      await new Promise(function(ok){setTimeout(ok,3000)});
+    }
+  }
   async function ask(text){
     text=(text||"").trim();
     if((!text&&!pending.length)||busy||rec)return;
-    busy=true;go.disabled=true;box.value="";grow();hero.hidden=true;
+    busy=true;go.disabled=true;box.value="";grow();hero.hidden=true;stat("WORKING");
     var att=pending;pending=[];draw();
     var media=[],notes=[],tags=[],ui=[],hasA=false;
     att.forEach(function(p){
@@ -208,8 +291,11 @@ textarea:focus{border-color:var(--accent)}
     if(notes.length)sent+="\n\n"+notes.join(" ");
     var item={role:"user",content:text,tag:tags.join(" · "),ask:sent,media:media.length?media:null};
     if(item.media)hist.forEach(function(h){h.media=null});
-    hist.push(item);add("user",text,item.tag,ui);
-    var el=add("bot","Thinking…");el.classList.add("think");
+    hist.push(item);
+    var ub=add("user",text,item.tag,ui);
+    var el=add("bot","Thinking"),base="Thinking",dots=0;
+    var tk=setInterval(function(){el.querySelector(".tx").textContent=base+".".repeat(dots=(dots+1)%4)},400);
+    el.classList.add("think");
     try{
       var last=-1;hist.forEach(function(h,i){if(h.media)last=i});
       var msgs=hist.map(function(h,i){
@@ -218,25 +304,43 @@ textarea:focus{border-color:var(--accent)}
         return m;
       }).slice(-20);
       while(msgs.length&&msgs[0].role!=="user")msgs.shift();
-      var post=function(){return fetch("/chat",{method:"POST",headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({messages:msgs})})};
-      var res=await post();
-      if(res.status===401){code=(prompt("Enter your access code")||"").trim();try{localStorage.setItem(CK,code)}catch(e){}res=await post()}
-      if(!res.ok){var er=new Error("http");er.code=res.status===429?"rate_limited":res.status===401?"auth":res.status===413?"big":"http";throw er}
+      var res=await send(msgs,function(){base="Waking the server, this can take up to a minute"});
+      if(res.status===401&&await unlock(code?"Wrong code. Try again.":""))res=await send(msgs,function(){});
+      if(!res.ok){
+        var j0=await res.json().catch(function(){return{}});
+        var er=new Error("http");er.code=res.status===429?"rate_limited":res.status===401?"auth":res.status===413?"big":"http";er.detail=j0.error;throw er;
+      }
       var r=await res.json(),out=r.text||"…";
-      el.classList.remove("think");el.lastChild.textContent=out;
+      clearInterval(tk);el.classList.remove("think");fill(el,out);
+      if(el.offsetHeight>log.clientHeight*.8)el.scrollIntoView({block:"start"});else log.scrollTop=log.scrollHeight;
       hist.push({role:"assistant",content:out});save();
     }catch(e){
-      el.classList.remove("think");el.classList.add("err");
-      el.lastChild.textContent=e&&e.code==="rate_limited"?"Too many requests. Give me a moment, then try again.":e&&e.code==="auth"?"Wrong access code. Send your message again to retry.":e&&e.code==="big"?"That is too much to send at once. Try fewer or shorter attachments.":"Can’t reach ULTRON. Check your connection and try again.";
-      hist.pop();if(att.length){pending=att;draw()}
-    }finally{busy=false;go.disabled=false}
+      clearInterval(tk);el.classList.remove("think");el.classList.add("err");
+      var msg=e&&e.code==="rate_limited"?"Too many requests, or the free AI limit is used up. Wait a minute and try again.":e&&e.code==="auth"?"An access code is needed. Tap Retry to enter it.":e&&e.code==="big"?"That is too much to send at once. Try fewer or shorter attachments.":!navigator.onLine?"You’re offline. Check your connection.":"ULTRON’s server didn’t respond. It may be waking up, so try again in a minute.";
+      if(e&&e.detail)msg+="\n("+String(e.detail).slice(0,120)+")";
+      el.querySelector(".tx").textContent=msg;
+      var rb=document.createElement("button");rb.type="button";rb.className="cp";rb.textContent="↻ Retry";
+      rb.onclick=function(){if(busy)return;ub.remove();el.remove();pending=att;ask(text)};
+      el.appendChild(rb);
+      hist.pop();
+    }finally{clearInterval(tk);busy=false;go.disabled=false;stat(navigator.onLine?"ONLINE":"OFFLINE")}
   }
   IDEAS.forEach(function(t){var b=document.createElement("button");b.type="button";b.className="chip";b.textContent=t;b.onclick=function(){ask(t)};$("chips").appendChild(b)});
   go.onclick=function(){ask(box.value)};
   box.addEventListener("input",grow);
-  box.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();ask(box.value)}});
-  $("clr").onclick=function(){if(busy||rec)return;hist=[];pending=[];draw();save();render()};
+  box.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing&&!touch){e.preventDefault();ask(box.value)}});
+  $("clr").onclick=function(){
+    if(busy||rec||!hist.length)return;
+    var b=$("clr");
+    if(!cc){b.textContent="Tap to confirm";cc=setTimeout(function(){cc=0;b.textContent="Clear"},3000);return}
+    clearTimeout(cc);cc=0;b.textContent="Clear";hist=[];pending=[];draw();save();render();
+  };
   render();
+  if(!navigator.onLine)stat("OFFLINE");
+  addEventListener("offline",function(){stat("OFFLINE")});
+  addEventListener("online",function(){stat("ONLINE");warm()});
+  document.addEventListener("visibilitychange",function(){if(document.hidden){if(rec)rec.stop()}else warm()});
+  warm();
 })();
 </script>
 <script>if("serviceWorker"in navigator)window.addEventListener("load",function(){navigator.serviceWorker.register("sw.js").catch(function(){})})</script>

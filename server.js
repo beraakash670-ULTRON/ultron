@@ -32,6 +32,7 @@ async function askGemini(msgs) {
     const r = await fetch(`${BASE}/models/${model}:generateContent`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": KEY },
+      signal: AbortSignal.timeout(60000),
       body: JSON.stringify({ system_instruction: { parts: [{ text: SYSTEM }] }, contents })
     });
     const data = await r.json().catch(() => ({}));
@@ -50,6 +51,7 @@ async function askGemini(msgs) {
 http.createServer(async (req, res) => {
   const send = (code, obj) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(obj)); };
   const url = req.url.split("?")[0];
+  if (req.method === "GET" && url === "/ping") return send(200, { ok: true, auth: !TOKEN || req.headers["x-app-token"] === TOKEN });
   if (req.method === "GET" && FILES[url]) {
     const [f, type] = FILES[url];
     return fs.readFile(path.join(__dirname, f), (err, data) => {

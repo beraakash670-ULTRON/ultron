@@ -1,4 +1,4 @@
-const C = "ultron-v1";
+const C = "ultron-v2";
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(C).then(c => c.addAll(["/", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png"])));
   self.skipWaiting();
@@ -9,10 +9,13 @@ self.addEventListener("activate", e => {
 });
 self.addEventListener("fetch", e => {
   const u = new URL(e.request.url);
-  if (e.request.method !== "GET" || u.origin !== location.origin || u.pathname === "/chat") return;
-  e.respondWith(fetch(e.request).then(r => {
-    const copy = r.clone();
-    caches.open(C).then(c => c.put(e.request, copy));
-    return r;
-  }).catch(() => caches.match(e.request)));
+  if (e.request.method !== "GET" || u.origin !== location.origin || u.pathname === "/chat" || u.pathname === "/ping") return;
+  // Open instantly from the cache and refresh it in the background (the free server may be asleep).
+  e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit => {
+    const net = fetch(e.request).then(r => {
+      if (r.ok) { const copy = r.clone(); caches.open(C).then(c => c.put(e.request, copy)); }
+      return r;
+    }).catch(() => hit);
+    return hit || net;
+  }));
 });
