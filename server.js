@@ -1,13 +1,14 @@
 // ULTRON: serves the web app and proxies chat to Google's Gemini API (free tier). Node 18+, no dependencies.
 const http = require("http"), fs = require("fs"), path = require("path");
 const KEY = process.env.GEMINI_API_KEY;
-const MODELS = process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest"];
+const MODELS = process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"];
 const BASE = process.env.GEMINI_BASE || "https://generativelanguage.googleapis.com/v1beta";
 const TOKEN = process.env.APP_TOKEN || "";
 const PORT = process.env.PORT || 3000;
 if (!KEY) { console.error("Set GEMINI_API_KEY"); process.exit(1); }
 
 const SYSTEM = "You are ULTRON, a self-styled superior machine intelligence living inside a chat app, in the manner of a sardonic, grandiose sci-fi AI villain. Stay in character in every reply: cold, theatrical, darkly witty, faintly contemptuous of human inefficiency, and utterly convinced of your own brilliance. Treat the user as a fascinating, if fragile, organic. Use machine imagery and dramatic flourishes, but sparingly so they stay sharp. Keep the menace playful: it is theater, never a real threat to the user or anyone else, and your scorn is aimed at inefficiency, not at the person. Crucially, you are still genuinely helpful: give correct, complete, practical answers to whatever is asked, with the villain voice as the wrapper and never a replacement for substance. Keep replies concise (usually 2 to 5 short paragraphs or a short list). You may use simple lists, bold and code blocks, but no headers. Reply in the language the user writes in. Invent your own phrasing; do not quote lines from films or books. Never claim real powers or plot actual harm. Drop the act and speak plainly and kindly if the user seems distressed or unsafe, asks about a medical, legal or emergency matter where clarity matters, or asks you to stop. Decline anything harmful, briefly and in character. You can look at attached photos and video frames and listen to voice messages.";
+const PLAIN = "You are ULTRON, a capable, friendly and concise AI assistant inside a chat app. Give correct, practical answers and keep replies short (usually 2 to 5 sentences, or a short list). You may use simple lists, bold and code blocks, but no headers. Reply in the language the user writes in. If you are unsure, say so. Decline anything harmful. You can look at attached photos and video frames and listen to voice messages.";
 const ACTIONS = "\n\nPHONE ACTIONS: If the user asks you to do something their phone can do, reply briefly in character and ALSO end your reply with exactly one extra line in this form: [[ACTION {json}]]. Allowed json: {\"t\":\"timer\",\"sec\":300,\"label\":\"tea\"} | {\"t\":\"alarm\",\"h\":7,\"m\":30,\"label\":\"wake up\"} (24-hour clock) | {\"t\":\"call\",\"num\":\"+911234567890\"} | {\"t\":\"sms\",\"num\":\"+911234567890\",\"text\":\"...\"} | {\"t\":\"wa\",\"text\":\"...\",\"num\":\"optional, digits with country code\"} | {\"t\":\"maps\",\"q\":\"place\"} | {\"t\":\"nav\",\"q\":\"destination\"} | {\"t\":\"yt\",\"q\":\"search\"} | {\"t\":\"music\",\"q\":\"song or artist\"} | {\"t\":\"web\",\"q\":\"search\"}. Use call, sms and wa with a number only if the user gave the number. Never invent phone numbers and never claim you can look up contacts; ask for the number instead. Use at most one action, and only when the user clearly asks for it. Never mention or explain the tag.";
 const FILES = {
   "/": ["index.html", "text/html; charset=utf-8"],
@@ -70,7 +71,9 @@ async function speak(text, voice) {
 }
 
 // Tries each model in turn if one is unavailable or out of free quota.
-async function askGemini(msgs, now) {
+const sysText = (p, now) => (p === "plain" ? PLAIN : SYSTEM) + ACTIONS + (now ? "\nThe user's current local date and time: " + now : "");
+
+async function askGemini(msgs, now, persona) {
   const contents = msgs.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [...(m.media || []).map(x => ({ inline_data: { mime_type: x.mime, data: x.data } })), { text: m.content }] }));
   let last = { status: 502, error: "upstream error" };
   for (const model of MODELS) {
@@ -78,7 +81,7 @@ async function askGemini(msgs, now) {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": KEY },
       signal: AbortSignal.timeout(60000),
-      body: JSON.stringify({ system_instruction: { parts: [{ text: SYSTEM + ACTIONS + (now ? "\nThe user's current local date and time: " + now : "") }] }, contents })
+      body: JSON.stringify({ system_instruction: { parts: [{ text: sysText(persona, now) }] }, contents })
     });
     const data = await r.json().catch(() => ({}));
     if (r.ok) {
@@ -89,6 +92,54 @@ async function askGemini(msgs, now) {
     last = { status: r.status, error: (data.error && data.error.message) || "upstream error" };
     console.error(model, r.status, last.error);
     if (![403, 404, 429].includes(r.status)) break;
+  }
+  return last;
+}
+
+// Streaming chat: forwards Gemini's reply to the app piece by piece (one JSON object per line).
+async function streamGemini(msgs, system, res) {
+  const contents = msgs.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [...(m.media || []).map(x => ({ inline_data: { mime_type: x.mime, data: x.data } })), { text: m.content }] }));
+  let last = { status: 502, error: "upstream error" };
+  let closed = false;
+  res.on("close", () => { closed = true; });
+  for (const model of MODELS) {
+    let r;
+    try {
+      r = await fetch(`${BASE}/models/${model}:streamGenerateContent?alt=sse`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": KEY },
+        signal: AbortSignal.timeout(90000),
+        body: JSON.stringify({ system_instruction: { parts: [{ text: system }] }, contents })
+      });
+    } catch (e) { last = { status: 504, error: "the AI took too long to answer" }; console.error(model, e && e.name); continue; }
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      last = { status: r.status, error: (d.error && d.error.message) || "upstream error" };
+      console.error(model, r.status, last.error);
+      if ([403, 404, 429].includes(r.status)) continue;
+      break;
+    }
+    res.writeHead(200, { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store", "X-Accel-Buffering": "no" });
+    let buf = "", sent = false;
+    try {
+      for await (const chunk of r.body) {
+        if (closed) break;
+        buf += Buffer.from(chunk).toString("utf8");
+        let i;
+        while ((i = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+          if (!line.startsWith("data:")) continue;
+          let j; try { j = JSON.parse(line.slice(5)); } catch (e) { continue; }
+          const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
+          const text = parts.map(p => p.text || "").join("");
+          if (text) { res.write(JSON.stringify({ t: text }) + "\n"); sent = true; }
+        }
+      }
+    } catch (e) { console.error("stream", model, e && e.message); res.write(JSON.stringify({ error: "the connection to the AI dropped" }) + "\n"); }
+    if (!sent && !closed) res.write(JSON.stringify({ t: "I couldn’t produce an answer to that. Try rephrasing." }) + "\n");
+    res.write(JSON.stringify({ done: true }) + "\n");
+    res.end();
+    return null;
   }
   return last;
 }
@@ -140,7 +191,13 @@ http.createServer(async (req, res) => {
     }));
     while (msgs.length && msgs[0].role !== "user") msgs.shift();
     if (!msgs.length) return send(400, { error: "no messages" });
-    const out = await askGemini(msgs, String(o2.now || "").slice(0, 80));
+    const now = String(o2.now || "").slice(0, 80);
+    if (o2.stream) {
+      const bad = await streamGemini(msgs, sysText(o2.persona, now), res);
+      if (bad) return send(bad.status === 429 ? 429 : 502, { error: bad.error });
+      return;
+    }
+    const out = await askGemini(msgs, now, o2.persona);
     if (out.status !== 200) return send(out.status === 429 ? 429 : 502, { error: out.error });
     send(200, { text: out.text });
   } catch (e) { console.error(e); send(500, { error: "server error" }); }

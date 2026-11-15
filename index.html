@@ -86,6 +86,11 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 @media(max-width:400px){h1{letter-spacing:.18em;font-size:16px}.st{display:none}}
 .ghost.on{border-color:var(--accent);color:var(--accent);animation:p 1.4s ease-in-out infinite}
 .act{display:inline-block;margin-top:8px;background:var(--accent);color:var(--accent-ink);border-radius:10px;padding:8px 12px;font-size:14px;font-weight:700;text-decoration:none}
+#menu{position:fixed;inset:0;z-index:15;background:rgba(0,0,0,.55);display:flex;align-items:flex-end}
+#menu[hidden]{display:none}
+.sheet{width:100%;background:var(--panel);border-top:1px solid var(--line);border-radius:18px 18px 0 0;padding:12px 16px calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px}
+.sheet button{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:14px;font-size:16px;text-align:left}
+.sheet #m-close{color:var(--mute);text-align:center}
 </style>
 </head>
 <body>
@@ -95,7 +100,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   <img id="ha" class="av" hidden alt="">
   <h1>ULTRON</h1>
   <span class="st" id="st">ONLINE</span>
-  <div class="hb"><button class="ghost" id="vo" type="button" aria-label="Voice on or off">🔊</button><button class="ghost" id="vc" type="button" aria-label="Change voice">🎙</button><button class="ghost" id="hf" type="button" aria-label="Hands-free: say Hey ULTRON">👂</button><button class="ghost" id="clr" type="button">Clear</button></div>
+  <div class="hb"><button class="ghost" id="vo" type="button" aria-label="Voice on or off">🔊</button><button class="ghost" id="vc" type="button" aria-label="Change voice">🎙</button><button class="ghost" id="hf" type="button" aria-label="Hands-free: say Hey ULTRON">👂</button><button class="ghost" id="mn" type="button" aria-label="Menu">⋯</button></div>
 </header>
 <div id="log">
   <div id="hero">
@@ -112,6 +117,13 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   <textarea id="box" rows="1" placeholder="Command ULTRON…" aria-label="Message"></textarea>
   <button id="go" type="button">SEND</button>
 </div>
+<div id="menu" hidden><div class="sheet">
+  <button id="m-persona" type="button"></button>
+  <button id="m-lang" type="button"></button>
+  <button id="m-export" type="button">Export chat as text</button>
+  <button id="clr" type="button">Clear chat</button>
+  <button id="m-close" type="button">Close</button>
+</div></div>
 <input type="file" id="file" accept="image/*,video/*" multiple hidden>
 <script>
 (function(){
@@ -326,11 +338,11 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   function resume(){setTimeout(function(){if(hfOn&&!busy&&!rec&&!document.hidden)hfListen()},400)}
   function hfListen(){
     if(!SR||!hfOn||hfRec||busy||rec||document.hidden)return;
-    var r=new SR();hfRec=r;r.lang="en-IN";r.continuous=true;r.interimResults=false;
+    var r=new SR();hfRec=r;r.lang=cfg.lang||"en-IN";r.continuous=true;r.interimResults=false;
     r.onresult=function(e){
       var t=String(e.results[e.results.length-1][0].transcript||"").trim();
       if(cmdMode){cmdMode=false;hfStop();ask(t);return}
-      var m=/\b(?:hey|hi|ok|okay)\s+(?:ultron|altron|ultran|ulton|oltron|alteron)\b[\s,.:!?]*(.*)$/i.exec(t);
+      var m=/(?:^|\s)(?:hey|hi|ok|okay|हे|हेय|ओके)\s+(?:ultron|altron|ultran|ulton|oltron|alteron|अल्ट्रॉन|अल्ट्रोन|अल्ट्रान|उल्ट्रॉन)(?=[\s,.:!?।]|$)[\s,.:!?।]*(.*)$/i.exec(t);
       if(m){
         hfStop();beep();
         if(m[1].trim().length>1)ask(m[1].trim());
@@ -340,6 +352,26 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     r.onend=function(){hfRec=null;resume()};
     r.onerror=function(e){if(e.error==="not-allowed"||e.error==="service-not-allowed"){hfOn=false;hfStop();syncHF();say("Microphone access was blocked. Allow it in Chrome’s site settings and try again.")}};
     try{r.start()}catch(e){hfRec=null}
+  }
+  var curAc=null,stopped=false;
+  function ptReset(){
+    try{
+      var p=new Intl.DateTimeFormat("en-US",{timeZone:"America/Los_Angeles",hour:"numeric",minute:"numeric",second:"numeric",hourCycle:"h23"}).formatToParts(new Date());
+      var g=function(k){return+p.find(function(x){return x.type===k}).value};
+      var ms=((23-g("hour"))*3600+(59-g("minute"))*60+(60-g("second")))*1000;
+      return Math.floor(ms/3600000)+" h "+Math.round(ms%3600000/60000)+" min";
+    }catch(e){return"a few hours"}
+  }
+  async function readStream(res,onText){
+    var out={full:"",err:""},dec=new TextDecoder(),buf="";
+    function eat(line){var j;if(!line.trim())return;try{j=JSON.parse(line)}catch(e){return}if(j.t){out.full+=j.t;onText(out.full)}else if(j.error)out.err=j.error}
+    if(res.body&&res.body.getReader){
+      var rd=res.body.getReader();
+      try{for(;;){var c=await rd.read();if(c.done)break;buf+=dec.decode(c.value,{stream:true});var i;while((i=buf.indexOf("\n"))>=0){eat(buf.slice(0,i));buf=buf.slice(i+1)}}}
+      catch(e){if(!stopped)throw e}
+      eat(buf);
+    }else{(await res.text()).split("\n").forEach(eat)}
+    return out;
   }
   function stat(s){$("st").textContent=s}
   function inl(p,s){
@@ -403,12 +435,12 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   }
   async function send(msgs,onWake){
     for(var n=0;n<2;n++){
-      var ac=new AbortController(),to=setTimeout(function(){ac.abort()},75000);
+      var ac=curAc=new AbortController(),to=setTimeout(function(){ac.abort()},75000);
       try{
-        var r=await fetch("/chat",{method:"POST",signal:ac.signal,headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({messages:msgs,now:new Date().toString()})});
+        var r=await fetch("/chat",{method:"POST",signal:ac.signal,headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({messages:msgs,now:new Date().toString(),stream:true,persona:cfg.persona})});
         clearTimeout(to);
         if(n||r.status<502||r.status>504)return r;
-      }catch(e){clearTimeout(to);if(n)throw e}
+      }catch(e){clearTimeout(to);if(n||stopped)throw e}
       onWake();
       await new Promise(function(ok){setTimeout(ok,3000)});
     }
@@ -416,7 +448,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   async function ask(text){
     text=(text||"").trim();
     if((!text&&!pending.length)||busy||rec)return;
-    hush();hfStop();busy=true;go.disabled=true;box.value="";grow();hero.hidden=true;stat("WORKING");
+    hush();hfStop();busy=true;stopped=false;go.textContent="STOP";box.value="";grow();hero.hidden=true;stat("WORKING");
     var att=pending;pending=[];draw();
     var media=[],notes=[],tags=[],ui=[],hasA=false;
     att.forEach(function(p){
@@ -451,30 +483,41 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
         var j0=await res.json().catch(function(){return{}});
         var er=new Error("http");er.code=res.status===429?"rate_limited":res.status===401?"auth":res.status===413?"big":"http";er.detail=j0.error;throw er;
       }
-      var r=await res.json(),pa=parseAction(r.text||"…"),out=pa.text||"…";
+      var ct=res.headers.get("content-type")||"",full="";
+      if(ct.indexOf("ndjson")>=0){
+        var rs=await readStream(res,function(tx){
+          clearInterval(tk);el.classList.remove("think");
+          var d=el.querySelector(".tx");d.textContent="";md(d,tx.replace(/\[\[ACTION[\s\S]*$/,"").trim());
+          if(el.offsetHeight<=log.clientHeight*.8)log.scrollTop=log.scrollHeight;
+        });
+        full=rs.full;
+        if(!full&&rs.err){var er2=new Error("http");er2.detail=rs.err;throw er2}
+      }else{var r0=await res.json();full=r0.text||""}
+      if(stopped&&!full)throw new Error("stopped");
+      var pa=parseAction(full||"…"),out=pa.text||"…";
       clearInterval(tk);el.classList.remove("think");fill(el,out);if(pa.act)addAct(el,pa.act);if(voiceOn)talk(out,resume);else resume();
       if(el.offsetHeight>log.clientHeight*.8)el.scrollIntoView({block:"start"});else log.scrollTop=log.scrollHeight;
       hist.push({role:"assistant",content:out});save();
     }catch(e){
       clearInterval(tk);el.classList.remove("think");el.classList.add("err");
-      var msg=e&&e.code==="rate_limited"?"Too many requests, or the free AI limit is used up. Wait a minute and try again.":e&&e.code==="auth"?"An access code is needed. Tap Retry to enter it.":e&&e.code==="big"?"That is too much to send at once. Try fewer or shorter attachments.":!navigator.onLine?"You’re offline. Check your connection.":"ULTRON’s server didn’t respond. It may be waking up, so try again in a minute.";
+      var msg=stopped?"Stopped.":e&&e.code==="rate_limited"?"Free AI limit reached. If it’s the daily limit, it resets in about "+ptReset()+" (midnight Pacific time). A per-minute limit clears in about a minute.":e&&e.code==="auth"?"An access code is needed. Tap Retry to enter it.":e&&e.code==="big"?"That is too much to send at once. Try fewer or shorter attachments.":!navigator.onLine?"You’re offline. Check your connection.":"ULTRON’s server didn’t respond. It may be waking up, so try again in a minute.";
       if(e&&e.detail)msg+="\n("+String(e.detail).slice(0,120)+")";
       el.querySelector(".tx").textContent=msg;
       var rb=document.createElement("button");rb.type="button";rb.className="cp";rb.textContent="↻ Retry";
       rb.onclick=function(){if(busy)return;ub.remove();el.remove();pending=att;ask(text)};
       el.appendChild(rb);
       hist.pop();resume();
-    }finally{clearInterval(tk);busy=false;go.disabled=false;stat(navigator.onLine?"ONLINE":"OFFLINE")}
+    }finally{clearInterval(tk);busy=false;go.textContent="SEND";stat(navigator.onLine?"ONLINE":"OFFLINE")}
   }
   IDEAS.forEach(function(t){var b=document.createElement("button");b.type="button";b.className="chip";b.textContent=t;b.onclick=function(){ask(t)};$("chips").appendChild(b)});
-  go.onclick=function(){ask(box.value)};
+  go.onclick=function(){if(busy){stopped=true;if(curAc)curAc.abort();return}ask(box.value)};
   box.addEventListener("input",grow);
   box.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing&&!touch){e.preventDefault();ask(box.value)}});
   $("clr").onclick=function(){
-    if(busy||rec||!hist.length)return;
+    if(busy||rec||!hist.length){$("menu").hidden=true;return}
     var b=$("clr");
-    if(!cc){b.textContent="Tap to confirm";cc=setTimeout(function(){cc=0;b.textContent="Clear"},3000);return}
-    clearTimeout(cc);cc=0;b.textContent="Clear";hush();hist=[];pending=[];draw();save();render();
+    if(!cc){b.textContent="Tap again to clear";cc=setTimeout(function(){cc=0;b.textContent="Clear chat"},3000);return}
+    clearTimeout(cc);cc=0;b.textContent="Clear chat";hush();hist=[];pending=[];draw();save();render();$("menu").hidden=true;
   };
   $("hf").onclick=async function(){
     if(!SR){say("Hands-free works in Chrome on Android.");return}
@@ -483,6 +526,23 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
       try{wl=await navigator.wakeLock.request("screen")}catch(e){}
       beep();add("bot","Hands-free is on. Say “Hey ULTRON” followed by your request, and keep this screen open.");hfListen();
     }else{hfStop();cmdMode=false;try{if(wl)wl.release()}catch(e){}wl=null}
+  };
+  var cfg={persona:"villain",lang:"en-IN"};
+  try{Object.assign(cfg,JSON.parse(localStorage.getItem("ultron:cfg")||"{}"))}catch(e){}
+  function saveCfg(){try{localStorage.setItem("ultron:cfg",JSON.stringify(cfg))}catch(e){}}
+  function syncMenu(){$("m-persona").textContent="Personality: "+(cfg.persona==="plain"?"Plain assistant":"Villain");$("m-lang").textContent="Hands-free language: "+(cfg.lang==="hi-IN"?"Hindi":"English (India)")}
+  $("mn").onclick=function(){syncMenu();$("menu").hidden=false};
+  $("m-close").onclick=function(){$("menu").hidden=true};
+  $("menu").onclick=function(e){if(e.target===this)this.hidden=true};
+  $("m-persona").onclick=function(){cfg.persona=cfg.persona==="plain"?"villain":"plain";saveCfg();syncMenu()};
+  $("m-lang").onclick=function(){cfg.lang=cfg.lang==="hi-IN"?"en-IN":"hi-IN";saveCfg();syncMenu();if(hfOn){hfStop();resume()}};
+  $("m-export").onclick=function(){
+    $("menu").hidden=true;
+    if(!hist.length){say("Nothing to export yet.");return}
+    var txt=hist.map(function(h){return(h.role==="user"?"You":"ULTRON")+": "+(h.content||h.tag||"")}).join("\n\n");
+    var u=URL.createObjectURL(new Blob([txt],{type:"text/plain"})),a=document.createElement("a");
+    a.href=u;a.download="ultron-chat.txt";document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(u)},4000);
   };
   var vo=$("vo");vo.textContent=voiceOn?"🔊":"🔇";
   vo.onclick=function(){
@@ -499,6 +559,8 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     talk("Voice "+(vIdx+1)+". Tremble, little human.");
   };
   render();
+  var qp=new URLSearchParams(location.search),shared=[qp.get("title"),qp.get("text"),qp.get("url")].filter(Boolean).join("\n");
+  if(shared){box.value=shared;grow();try{history.replaceState(null,"",location.pathname)}catch(e){}}
   if(!navigator.onLine)stat("OFFLINE");
   addEventListener("offline",function(){stat("OFFLINE")});
   addEventListener("online",function(){stat("ONLINE");warm()});
