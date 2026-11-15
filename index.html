@@ -84,6 +84,8 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 .hb button{margin-left:0;padding:4px 9px}
 .row{display:flex;gap:16px}
 @media(max-width:400px){h1{letter-spacing:.18em;font-size:16px}.st{display:none}}
+.ghost.on{border-color:var(--accent);color:var(--accent);animation:p 1.4s ease-in-out infinite}
+.act{display:inline-block;margin-top:8px;background:var(--accent);color:var(--accent-ink);border-radius:10px;padding:8px 12px;font-size:14px;font-weight:700;text-decoration:none}
 </style>
 </head>
 <body>
@@ -93,7 +95,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   <img id="ha" class="av" hidden alt="">
   <h1>ULTRON</h1>
   <span class="st" id="st">ONLINE</span>
-  <div class="hb"><button class="ghost" id="vo" type="button" aria-label="Voice on or off">🔊</button><button class="ghost" id="vc" type="button" aria-label="Change voice">🎙</button><button class="ghost" id="clr" type="button">Clear</button></div>
+  <div class="hb"><button class="ghost" id="vo" type="button" aria-label="Voice on or off">🔊</button><button class="ghost" id="vc" type="button" aria-label="Change voice">🎙</button><button class="ghost" id="hf" type="button" aria-label="Hands-free: say Hey ULTRON">👂</button><button class="ghost" id="clr" type="button">Clear</button></div>
 </header>
 <div id="log">
   <div id="hero">
@@ -200,13 +202,13 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     }
   };
   mic.onclick=async function(){
-    hush();if(rec){rec.stop();return}
+    hush();hfStop();if(rec){rec.stop();return}
     if(!navigator.mediaDevices||!window.MediaRecorder){say("Recording isn’t supported in this browser.");return}
     try{
       var st=await navigator.mediaDevices.getUserMedia({audio:true}),ch=[],mr=new MediaRecorder(st),t0=Date.now();
       mr.ondataavailable=function(e){if(e.data.size)ch.push(e.data)};
       mr.onstop=async function(){
-        st.getTracks().forEach(function(t){t.stop()});clearTimeout(ts);clearInterval(mt);mic.textContent="🎤";rec=null;mic.classList.remove("rec");
+        st.getTracks().forEach(function(t){t.stop()});clearTimeout(ts);clearInterval(mt);mic.textContent="🎤";rec=null;mic.classList.remove("rec");resume();
         var sec=Math.round((Date.now()-t0)/1000);
         try{
           var wav=await toWav(new Blob(ch,{type:mr.mimeType}));
@@ -250,29 +252,89 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     try{osc.stop()}catch(e){}
     if(cur===src)cur=null;
   }
-  function phone(s){
+  function phone(s,cb){
     var vs=voices(s),v=vs.length?vs[Math.max(vIdx-PRESETS.length,0)%vs.length]:null,parts=[],cur2="";
     (s.match(/[^.!?।]+[.!?।]*\s*/g)||[s]).forEach(function(x){if(cur2&&(cur2+x).length>180){parts.push(cur2);cur2=x}else cur2+=x});
     if(cur2)parts.push(cur2);
     parts=parts.reduce(function(o,p){while(p.length>220){var i=p.lastIndexOf(" ",200);if(i<50)i=200;o.push(p.slice(0,i));p=p.slice(i)}o.push(p);return o},[]);
     setTimeout(function(){
-      parts.forEach(function(p){
+      parts.forEach(function(p,i){
         var u=new SpeechSynthesisUtterance(p);
         if(v){u.voice=v;u.lang=v.lang}else u.lang=/[\u0900-\u097F]/.test(s)?"hi-IN":"en-US";
-        u.pitch=.5;u.rate=.9;speechSynthesis.speak(u);
+        u.pitch=.5;u.rate=.9;
+        if(cb&&i===parts.length-1){u.onend=cb;u.onerror=cb}
+        speechSynthesis.speak(u);
       });
     },80);
   }
-  function talk(text){
-    var s=clean(text);if(!s)return;
+  function talk(text,cb){
+    var s=clean(text);
+    if(!s){if(cb)cb();return}
     hush();var g=gen;
+    var done=function(){if(g===gen&&cb)cb()};
     if(vIdx<PRESETS.length){
       var sh=s.length>700?(s.slice(0,700).replace(/[^.!?।]*$/,"")||s.slice(0,700)):s;
-      studio(sh,g,PRESETS[vIdx]).catch(function(e){
+      studio(sh,g,PRESETS[vIdx]).then(done,function(e){
         if(!warned){warned=true;add("bot","Studio voice unavailable: "+(e&&e.message||"unknown error")+". Using the phone voice instead.").classList.add("err")}
-        if(g===gen&&window.speechSynthesis)phone(s);
+        if(g===gen&&window.speechSynthesis)phone(s,done);else done();
       });
-    }else if(window.speechSynthesis)phone(s);
+    }else if(window.speechSynthesis)phone(s,done);else done();
+  }
+  // ---- Phone actions: the AI can end a reply with [[ACTION {...}]]; you get a button to tap ----
+  function dur(s){var h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return((h?h+" h ":"")+(m?m+" min ":"")+(!h&&x?x+" s":"")).trim()}
+  function actLink(a){
+    if(!a||typeof a!=="object")return null;
+    var q=function(x){return encodeURIComponent(String(x==null?"":x).slice(0,300))};
+    var n=String(a.num||"").replace(/[\s()-]/g,"");n=/^\+?\d{5,15}$/.test(n)?n:"";
+    var g="intent:#Intent;action=android.intent.action.",lb=function(x){return String(x).slice(0,40)};
+    switch(a.t){
+      case"timer":var sec=Math.round(+a.sec);if(!(sec>0&&sec<=86400))return null;
+        return{lab:"⏰ Set timer: "+dur(sec),href:g+"SET_TIMER;i.android.intent.extra.alarm.LENGTH="+sec+";S.android.intent.extra.alarm.MESSAGE="+q(a.label||"ULTRON")+";end"};
+      case"alarm":var hr=Math.floor(+a.h),mi=Math.floor(+a.m||0);if(!(hr>=0&&hr<=23&&mi>=0&&mi<=59))return null;
+        return{lab:"⏰ Set alarm: "+hr+":"+("0"+mi).slice(-2),href:g+"SET_ALARM;i.android.intent.extra.alarm.HOUR="+hr+";i.android.intent.extra.alarm.MINUTES="+mi+";S.android.intent.extra.alarm.MESSAGE="+q(a.label||"ULTRON")+";end"};
+      case"call":return n?{lab:"📞 Call "+n,href:"tel:"+n}:null;
+      case"sms":return n?{lab:"💬 Text "+n,href:"sms:"+n+"?body="+q(a.text)}:null;
+      case"wa":return{lab:"🟢 WhatsApp"+(n?" "+n:""),href:"https://wa.me/"+n.replace("+","")+"?text="+q(a.text)};
+      case"maps":return a.q?{lab:"🗺 Maps: "+lb(a.q),href:"https://www.google.com/maps/search/?api=1&query="+q(a.q)}:null;
+      case"nav":return a.q?{lab:"🧭 Navigate: "+lb(a.q),href:"https://www.google.com/maps/dir/?api=1&destination="+q(a.q)}:null;
+      case"yt":return a.q?{lab:"▶ YouTube: "+lb(a.q),href:"https://www.youtube.com/results?search_query="+q(a.q)}:null;
+      case"music":return a.q?{lab:"🎵 Play: "+lb(a.q),href:"https://music.youtube.com/search?q="+q(a.q)}:null;
+      case"web":return a.q?{lab:"🔎 Search: "+lb(a.q),href:"https://www.google.com/search?q="+q(a.q)}:null;
+    }
+    return null;
+  }
+  function parseAction(t){
+    var m=/\[\[ACTION\s*(\{[\s\S]*?\})\s*\]\]/.exec(t),a=null;
+    if(m){try{a=actLink(JSON.parse(m[1]))}catch(e){}}
+    return{text:t.replace(/\[\[ACTION[\s\S]*?\]\]/g,"").trim(),act:a};
+  }
+  function addAct(d,a){
+    var b=document.createElement("a");b.className="act";b.href=a.href;b.textContent=a.lab;
+    if(/^https?:/.test(a.href)){b.target="_blank";b.rel="noopener"}
+    d.appendChild(b);
+  }
+  // ---- Hands-free: say "Hey ULTRON" while the app is open ----
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition,hfOn=false,hfRec=null,cmdMode=false,wl=null;
+  function beep(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();var o=actx.createOscillator(),g=actx.createGain();o.frequency.value=660;g.gain.value=.12;o.connect(g);g.connect(actx.destination);o.start();o.stop(actx.currentTime+.14)}catch(e){}}
+  function hfStop(){try{if(hfRec){hfRec.onend=null;hfRec.abort()}}catch(e){}hfRec=null}
+  function syncHF(){var h=$("hf");h.classList.toggle("on",hfOn);h.textContent=hfOn?"🎧":"👂"}
+  function resume(){setTimeout(function(){if(hfOn&&!busy&&!rec&&!document.hidden)hfListen()},400)}
+  function hfListen(){
+    if(!SR||!hfOn||hfRec||busy||rec||document.hidden)return;
+    var r=new SR();hfRec=r;r.lang="en-IN";r.continuous=true;r.interimResults=false;
+    r.onresult=function(e){
+      var t=String(e.results[e.results.length-1][0].transcript||"").trim();
+      if(cmdMode){cmdMode=false;hfStop();ask(t);return}
+      var m=/\b(?:hey|hi|ok|okay)\s+(?:ultron|altron|ultran|ulton|oltron|alteron)\b[\s,.:!?]*(.*)$/i.exec(t);
+      if(m){
+        hfStop();beep();
+        if(m[1].trim().length>1)ask(m[1].trim());
+        else{cmdMode=true;setTimeout(function(){cmdMode=false},8000);resume()}
+      }
+    };
+    r.onend=function(){hfRec=null;resume()};
+    r.onerror=function(e){if(e.error==="not-allowed"||e.error==="service-not-allowed"){hfOn=false;hfStop();syncHF();say("Microphone access was blocked. Allow it in Chrome’s site settings and try again.")}};
+    try{r.start()}catch(e){hfRec=null}
   }
   function stat(s){$("st").textContent=s}
   function inl(p,s){
@@ -303,7 +365,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
       setTimeout(function(){b.textContent="Copy"},1800);
     };
     var sp=document.createElement("button");sp.type="button";sp.className="cp";sp.textContent="🔊 Speak";
-    sp.onclick=function(){talk(s)};
+    sp.onclick=function(){talk(s,resume)};
     var row=document.createElement("div");row.className="row";row.appendChild(b);row.appendChild(sp);d.appendChild(row);
   }
   function needCode(msg){
@@ -338,7 +400,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     for(var n=0;n<2;n++){
       var ac=new AbortController(),to=setTimeout(function(){ac.abort()},75000);
       try{
-        var r=await fetch("/chat",{method:"POST",signal:ac.signal,headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({messages:msgs})});
+        var r=await fetch("/chat",{method:"POST",signal:ac.signal,headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({messages:msgs,now:new Date().toString()})});
         clearTimeout(to);
         if(n||r.status<502||r.status>504)return r;
       }catch(e){clearTimeout(to);if(n)throw e}
@@ -349,7 +411,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   async function ask(text){
     text=(text||"").trim();
     if((!text&&!pending.length)||busy||rec)return;
-    hush();busy=true;go.disabled=true;box.value="";grow();hero.hidden=true;stat("WORKING");
+    hush();hfStop();busy=true;go.disabled=true;box.value="";grow();hero.hidden=true;stat("WORKING");
     var att=pending;pending=[];draw();
     var media=[],notes=[],tags=[],ui=[],hasA=false;
     att.forEach(function(p){
@@ -384,8 +446,8 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
         var j0=await res.json().catch(function(){return{}});
         var er=new Error("http");er.code=res.status===429?"rate_limited":res.status===401?"auth":res.status===413?"big":"http";er.detail=j0.error;throw er;
       }
-      var r=await res.json(),out=r.text||"…";
-      clearInterval(tk);el.classList.remove("think");fill(el,out);if(voiceOn)talk(out);
+      var r=await res.json(),pa=parseAction(r.text||"…"),out=pa.text||"…";
+      clearInterval(tk);el.classList.remove("think");fill(el,out);if(pa.act)addAct(el,pa.act);if(voiceOn)talk(out,resume);else resume();
       if(el.offsetHeight>log.clientHeight*.8)el.scrollIntoView({block:"start"});else log.scrollTop=log.scrollHeight;
       hist.push({role:"assistant",content:out});save();
     }catch(e){
@@ -396,7 +458,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
       var rb=document.createElement("button");rb.type="button";rb.className="cp";rb.textContent="↻ Retry";
       rb.onclick=function(){if(busy)return;ub.remove();el.remove();pending=att;ask(text)};
       el.appendChild(rb);
-      hist.pop();
+      hist.pop();resume();
     }finally{clearInterval(tk);busy=false;go.disabled=false;stat(navigator.onLine?"ONLINE":"OFFLINE")}
   }
   IDEAS.forEach(function(t){var b=document.createElement("button");b.type="button";b.className="chip";b.textContent=t;b.onclick=function(){ask(t)};$("chips").appendChild(b)});
@@ -408,6 +470,14 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     var b=$("clr");
     if(!cc){b.textContent="Tap to confirm";cc=setTimeout(function(){cc=0;b.textContent="Clear"},3000);return}
     clearTimeout(cc);cc=0;b.textContent="Clear";hush();hist=[];pending=[];draw();save();render();
+  };
+  $("hf").onclick=async function(){
+    if(!SR){say("Hands-free works in Chrome on Android.");return}
+    hfOn=!hfOn;syncHF();
+    if(hfOn){
+      try{wl=await navigator.wakeLock.request("screen")}catch(e){}
+      beep();add("bot","Hands-free is on. Say “Hey ULTRON” followed by your request, and keep this screen open.");hfListen();
+    }else{hfStop();cmdMode=false;try{if(wl)wl.release()}catch(e){}wl=null}
   };
   var vo=$("vo");vo.textContent=voiceOn?"🔊":"🔇";
   vo.onclick=function(){
@@ -427,7 +497,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   if(!navigator.onLine)stat("OFFLINE");
   addEventListener("offline",function(){stat("OFFLINE")});
   addEventListener("online",function(){stat("ONLINE");warm()});
-  document.addEventListener("visibilitychange",function(){if(document.hidden){hush();if(rec)rec.stop()}else warm()});
+  document.addEventListener("visibilitychange",function(){if(document.hidden){hush();hfStop();if(rec)rec.stop()}else{warm();if(hfOn){resume();try{navigator.wakeLock.request("screen").then(function(l){wl=l}).catch(function(){})}catch(e){}}}});
   warm();
 })();
 </script>
