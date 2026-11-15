@@ -221,7 +221,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
       ts=setTimeout(function(){if(rec)rec.stop()},60000);
     }catch(e){say("Microphone access was blocked. Allow it in Chrome’s site settings and try again.")}
   };
-  var voiceOn=true,vIdx=0,gen=0,cur=null,actx=null,warned=false,PRESETS=["Algenib","Gacrux","Charon"];
+  var voiceOn=true,vIdx=0,gen=0,cur=null,actx=null,warned=false,studioOff=0,PRESETS=["Algenib","Gacrux","Charon"];
   try{voiceOn=localStorage.getItem("ultron:voice")!=="off";vIdx=+localStorage.getItem("ultron:vm")||0}catch(e){}
   try{speechSynthesis.getVoices()}catch(e){}
   function hush(){gen++;try{speechSynthesis.cancel()}catch(e){}if(cur){try{cur.stop()}catch(e){}cur=null}}
@@ -232,7 +232,10 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   function clean(t){return t.replace(/```[\s\S]*?```/g," Code omitted. ").replace(/https?:\/\/\S+/g," link ").replace(/[*_`#>•]/g,"").replace(/\s+/g," ").trim()}
   // Studio voice: Gemini speech from the server, then a robotic colour added with Web Audio.
   async function studio(s,g,voice){
-    var r=await fetch("/speak",{method:"POST",headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({text:s,voice:voice})});
+    var ac=new AbortController(),to=setTimeout(function(){ac.abort()},40000),r;
+    try{r=await fetch("/speak",{method:"POST",signal:ac.signal,headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({text:s,voice:voice})})}
+    catch(e){throw new Error(e&&e.name==="AbortError"?"the voice took too long to generate":"network error")}
+    finally{clearTimeout(to)}
     if(!r.ok){var j=await r.json().catch(function(){return{}});throw new Error(String(j.error||"HTTP "+r.status).slice(0,110))}
     var raw=await r.arrayBuffer();
     if(g!==gen)return;
@@ -272,10 +275,12 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     if(!s){if(cb)cb();return}
     hush();var g=gen;
     var done=function(){if(g===gen&&cb)cb()};
-    if(vIdx<PRESETS.length){
-      var sh=s.length>700?(s.slice(0,700).replace(/[^.!?।]*$/,"")||s.slice(0,700)):s;
+    if(vIdx<PRESETS.length&&Date.now()>=studioOff){
+      var sh=s.length>300?(s.slice(0,300).replace(/[^.!?।]*$/,"")||s.slice(0,300)):s;
       studio(sh,g,PRESETS[vIdx]).then(done,function(e){
-        if(!warned){warned=true;add("bot","Studio voice unavailable: "+(e&&e.message||"unknown error")+". Using the phone voice instead.").classList.add("err")}
+        var m=(e&&e.message)||"unknown error";
+        studioOff=Date.now()+(/quota|exceed|limit|resource/i.test(m)?3600000:600000);
+        if(!warned){warned=true;add("bot","Studio voice unavailable: "+m+". Using the phone voice for a while.").classList.add("err")}
         if(g===gen&&window.speechSynthesis)phone(s,done);else done();
       });
     }else if(window.speechSynthesis)phone(s,done);else done();

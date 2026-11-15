@@ -36,29 +36,34 @@ function wav(pcm, rate) {
   return Buffer.concat([h, pcm]);
 }
 
-// Gemini speech: a deep, slow, menacing delivery. Tries each TTS model in turn.
+// Gemini speech: a deep, slow, menacing delivery. Tries each TTS model in turn; one slow or failing model never blocks the next.
+const TTS_MS = +process.env.TTS_TIMEOUT_MS || 20000;
 async function speak(text, voice) {
   const voiceName = VOICES.includes(voice) ? voice : TTS_VOICE;
   let last = { status: 502, error: "no audio returned" };
   for (const model of TTS_MODELS) {
-    const r = await fetch(`${BASE}/models/${model}:generateContent`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": KEY },
-      signal: AbortSignal.timeout(45000),
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: "Say in the voice of a very old, hoarse, gravelly man, a cold and threatening villain: low, slow and deliberate, with long ominous pauses and quiet menace: " + text }] }],
-        generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } } }
-      })
-    });
-    const data = await r.json().catch(() => ({}));
-    const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
-    const part = parts.find(p => p.inlineData || p.inline_data);
-    const inl = part && (part.inlineData || part.inline_data);
-    if (r.ok && inl && inl.data) {
-      const m = /rate=(\d+)/.exec(inl.mimeType || inl.mime_type || "");
-      return { status: 200, audio: wav(Buffer.from(inl.data, "base64"), m ? +m[1] : 24000) };
+    try {
+      const r = await fetch(`${BASE}/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": KEY },
+        signal: AbortSignal.timeout(TTS_MS),
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: "Say in the voice of a very old, hoarse, gravelly man, a cold and threatening villain: low, slow and deliberate, with long ominous pauses and quiet menace: " + text }] }],
+          generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } } }
+        })
+      });
+      const data = await r.json().catch(() => ({}));
+      const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+      const part = parts.find(p => p.inlineData || p.inline_data);
+      const inl = part && (part.inlineData || part.inline_data);
+      if (r.ok && inl && inl.data) {
+        const m = /rate=(\d+)/.exec(inl.mimeType || inl.mime_type || "");
+        return { status: 200, audio: wav(Buffer.from(inl.data, "base64"), m ? +m[1] : 24000) };
+      }
+      last = { status: r.ok ? 502 : r.status, error: (data.error && data.error.message) || "no audio returned" };
+    } catch (e) {
+      last = { status: 504, error: e && e.name === "TimeoutError" ? "the voice took too long to generate" : String((e && e.message) || e).slice(0, 100) };
     }
-    last = { status: r.ok ? 502 : r.status, error: (data.error && data.error.message) || "no audio returned" };
     console.error("tts", model, last.status, last.error);
   }
   return last;
@@ -124,7 +129,7 @@ http.createServer(async (req, res) => {
       if (out.status !== 200) return send(502, { error: out.error });
       res.writeHead(200, { "Content-Type": "audio/wav", "Cache-Control": "no-store" });
       return res.end(out.audio);
-    } catch (e) { console.error(e); return send(500, { error: "server error" }); }
+    } catch (e) { console.error(e); return send(500, { error: "server error: " + String((e && e.message) || e).slice(0, 80) }); }
   }
   try {
     const o2 = JSON.parse(body);
