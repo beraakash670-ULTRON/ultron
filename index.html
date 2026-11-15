@@ -219,7 +219,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
       ts=setTimeout(function(){if(rec)rec.stop()},60000);
     }catch(e){say("Microphone access was blocked. Allow it in Chrome’s site settings and try again.")}
   };
-  var voiceOn=true,vIdx=0,gen=0,cur=null,actx=null;
+  var voiceOn=true,vIdx=0,gen=0,cur=null,actx=null,warned=false;
   try{voiceOn=localStorage.getItem("ultron:voice")!=="off";vIdx=+localStorage.getItem("ultron:vm")||0}catch(e){}
   try{speechSynthesis.getVoices()}catch(e){}
   function hush(){gen++;try{speechSynthesis.cancel()}catch(e){}if(cur){try{cur.stop()}catch(e){}cur=null}}
@@ -231,7 +231,7 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
   // Studio voice: Gemini speech from the server, then a robotic colour added with Web Audio.
   async function studio(s,g){
     var r=await fetch("/speak",{method:"POST",headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({text:s})});
-    if(!r.ok)throw new Error("tts");
+    if(!r.ok){var j=await r.json().catch(function(){return{}});throw new Error(String(j.error||"HTTP "+r.status).slice(0,110))}
     var raw=await r.arrayBuffer();
     if(g!==gen)return;
     actx=actx||new (window.AudioContext||window.webkitAudioContext)();
@@ -268,7 +268,10 @@ button{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     hush();var g=gen;
     if(vIdx===0){
       var sh=s.length>700?(s.slice(0,700).replace(/[^.!?।]*$/,"")||s.slice(0,700)):s;
-      studio(sh,g).catch(function(){if(g===gen&&window.speechSynthesis)phone(s)});
+      studio(sh,g).catch(function(e){
+        if(!warned){warned=true;add("bot","Studio voice unavailable: "+(e&&e.message||"unknown error")+". Using the phone voice instead.").classList.add("err")}
+        if(g===gen&&window.speechSynthesis)phone(s);
+      });
     }else if(window.speechSynthesis)phone(s);
   }
   function stat(s){$("st").textContent=s}
