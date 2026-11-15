@@ -18,6 +18,7 @@ const FILES = {
 const OK = ["image/jpeg", "image/png", "image/webp", "audio/wav"];
 const TTS_MODELS = process.env.TTS_MODEL ? [process.env.TTS_MODEL] : ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
 const TTS_VOICE = process.env.TTS_VOICE || "Algenib";
+const VOICES = ["Algenib", "Gacrux", "Charon", "Orus", "Alnilam"];
 const hits = new Map();
 function limited(ip) {
   const now = Date.now();
@@ -35,7 +36,8 @@ function wav(pcm, rate) {
 }
 
 // Gemini speech: a deep, slow, menacing delivery. Tries each TTS model in turn.
-async function speak(text) {
+async function speak(text, voice) {
+  const voiceName = VOICES.includes(voice) ? voice : TTS_VOICE;
   let last = { status: 502, error: "no audio returned" };
   for (const model of TTS_MODELS) {
     const r = await fetch(`${BASE}/models/${model}:generateContent`, {
@@ -43,8 +45,8 @@ async function speak(text) {
       headers: { "content-type": "application/json", "x-goog-api-key": KEY },
       signal: AbortSignal.timeout(45000),
       body: JSON.stringify({
-        contents: [{ parts: [{ text: "Say in a cold, slow, dry, menacing, theatrical voice: " + text }] }],
-        generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: TTS_VOICE } } } }
+        contents: [{ parts: [{ text: "Say in the voice of a very old, hoarse, gravelly man, a cold and threatening villain: low, slow and deliberate, with long ominous pauses and quiet menace: " + text }] }],
+        generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } } }
       })
     });
     const data = await r.json().catch(() => ({}));
@@ -114,9 +116,10 @@ http.createServer(async (req, res) => {
   for await (const c of req) { body += c; if (body.length > 15000000) return send(413, { error: "too large" }); }
   if (url === "/speak") {
     try {
-      const text = String(JSON.parse(body).text || "").slice(0, 900);
+      const o = JSON.parse(body);
+      const text = String(o.text || "").slice(0, 900);
       if (!text.trim()) return send(400, { error: "no text" });
-      const out = await speak(text);
+      const out = await speak(text, o.voice);
       if (out.status !== 200) return send(502, { error: out.error });
       res.writeHead(200, { "Content-Type": "audio/wav", "Cache-Control": "no-store" });
       return res.end(out.audio);
