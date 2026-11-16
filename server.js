@@ -1,5 +1,5 @@
 // ULTRON: serves the web app and proxies chat to Google's Gemini API (free tier). Node 18+, no dependencies.
-const http = require("http"), fs = require("fs"), path = require("path");
+const http = require("http"), fs = require("fs"), path = require("path"), crypto = require("crypto");
 const KEY = process.env.GEMINI_API_KEY;
 const MODELS = process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-2.5-flash-lite"];
 const BASE = process.env.GEMINI_BASE || "https://generativelanguage.googleapis.com/v1beta";
@@ -21,6 +21,12 @@ const OK = ["image/jpeg", "image/png", "image/webp", "audio/wav"];
 const TTS_MODELS = process.env.TTS_MODEL ? [process.env.TTS_MODEL] : ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
 const TTS_VOICE = process.env.TTS_VOICE || "Algenib";
 const VOICES = ["Algenib", "Gacrux", "Charon", "Orus", "Alnilam"];
+const hash = b => crypto.createHash("md5").update(b).digest("hex").slice(0, 10);
+let bCache = { m: 0, h: "" };
+const build = () => { try { const f = path.join(__dirname, "index.html"), m = fs.statSync(f).mtimeMs; if (m !== bCache.m) bCache = { m, h: hash(fs.readFileSync(f)) }; return bCache.h; } catch (e) { return ""; } };
+process.on("uncaughtException", e => console.error("uncaught", e));
+process.on("unhandledRejection", e => console.error("unhandled", e));
+setInterval(() => { const now = Date.now(); for (const [k, a] of hits) if (!a.some(x => now - x < 60000)) hits.delete(k); }, 600000).unref();
 const hits = new Map();
 function limited(ip) {
   const now = Date.now();
@@ -145,7 +151,7 @@ async function streamGemini(msgs, system, res) {
 }
 
 http.createServer(async (req, res) => {
-  const send = (code, obj) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(obj)); };
+  const send = (code, obj) => { res.writeHead(code, { "Content-Type": "application/json", "X-Content-Type-Options": "nosniff" }); res.end(JSON.stringify(obj)); };
   const url = req.url.split("?")[0];
   if (req.method === "GET" && url === "/face.jpg") {
     if (TOKEN && req.headers["x-app-token"] !== TOKEN) return send(401, { error: "unauthorized" });
@@ -155,13 +161,14 @@ http.createServer(async (req, res) => {
       res.end(data);
     });
   }
-  if (req.method === "GET" && url === "/ping") return send(200, { ok: true, auth: !TOKEN || req.headers["x-app-token"] === TOKEN });
+  if (req.method === "GET" && url === "/ping") return send(200, { ok: true, auth: !TOKEN || req.headers["x-app-token"] === TOKEN, build: build() });
   if (req.method === "GET" && FILES[url]) {
     const [f, type] = FILES[url];
     return fs.readFile(path.join(__dirname, f), (err, data) => {
       if (err) return send(404, { error: "missing file" });
-      res.writeHead(200, { "Content-Type": type, "Cache-Control": type === "image/png" ? "public, max-age=86400" : "no-cache" });
-      res.end(data);
+      const body = url === "/" ? Buffer.from(data.toString("utf8").replace("</head>", '<meta name="build" content="' + hash(data) + '">\n</head>')) : data;
+      res.writeHead(200, { "X-Content-Type-Options": "nosniff", "Content-Type": type, "Cache-Control": type === "image/png" ? "public, max-age=86400" : "no-cache" });
+      res.end(body);
     });
   }
   if (req.method !== "POST" || (url !== "/chat" && url !== "/speak")) return send(404, { error: "not found" });
