@@ -159,6 +159,24 @@ header{order:-2}
 #log>*{flex-shrink:0}
 textarea{scrollbar-width:none}
 textarea::-webkit-scrollbar{display:none}
+.sheet{max-height:84vh;overflow-y:auto}
+#panel{position:fixed;inset:0;z-index:16;background:rgba(0,0,0,.55);display:flex;align-items:flex-end}
+#panel[hidden]{display:none}
+#pt{margin:0 0 2px;font-size:13px;letter-spacing:.18em;color:var(--mute);font-weight:600}
+#pb{display:flex;flex-direction:column;gap:8px}
+.hint{color:var(--mute);font-size:14px;padding:6px 2px}
+.li2{display:flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:12px;background:var(--bg)}
+.sheet .li2 button{border:0;background:none;border-radius:0;padding:12px}
+.sheet .li2 .grow1{flex:1;font-size:15px;overflow-wrap:anywhere}
+.sheet .li2 .x{flex:none;color:var(--mute);padding:12px 14px}
+.sheet #pclose{color:var(--mute);text-align:center}
+#pin{width:100%;box-sizing:border-box;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:16px;outline:none}
+#pin:focus{border-color:var(--accent)}
+body[data-fs="l"] .m{font-size:18px}
+body[data-fs="xl"] .m{font-size:20px}
+.srcs{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mute)}
+.srcs a{color:var(--ink);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--bg)}
+.sugg{display:block;width:100%;height:56px;border:0;margin-top:8px;color-scheme:dark;background:transparent}
 </style>
 </head>
 <body>
@@ -189,11 +207,17 @@ textarea::-webkit-scrollbar{display:none}
 </div>
 <div id="menu" hidden><div class="sheet">
   <button id="m-persona" type="button"></button>
+  <button id="m-search" type="button"></button>
   <button id="m-lang" type="button"></button>
+  <button id="m-size" type="button"></button>
+  <button id="m-mem" type="button"></button>
+  <button id="m-chats" type="button"></button>
+  <button id="m-new" type="button">New chat</button>
   <button id="m-export" type="button">Export chat as text</button>
   <button id="clr" type="button">Clear chat</button>
   <button id="m-close" type="button">Close</button>
 </div></div>
+<div id="panel" hidden><div class="sheet"><h3 id="pt"></h3><div id="pb"></div><button id="pclose" type="button">Close</button></div></div>
 <input type="file" id="file" accept="image/*,video/*" multiple hidden>
 <script>
 (function(){
@@ -233,6 +257,7 @@ textarea::-webkit-scrollbar{display:none}
     Array.prototype.slice.call(log.querySelectorAll(".m")).forEach(function(n){n.remove()});
     hist.forEach(function(h){var d=add(h.role==="user"?"user":"bot",h.content,h.tag);if(h.role!=="user")fill(d,h.content)});
     hero.hidden=hist.length>0;
+    rg(true);
   }
   function b64(blob){return new Promise(function(ok,no){var r=new FileReader();r.onload=function(){ok(String(r.result).split(",")[1])};r.onerror=no;r.readAsDataURL(blob)})}
   function jpeg(src,w,h,max,q){
@@ -446,7 +471,7 @@ textarea::-webkit-scrollbar{display:none}
   }
   async function readStream(res,onText){
     var out={full:"",err:""},dec=new TextDecoder(),buf="";
-    function eat(line){var j;if(!line.trim())return;try{j=JSON.parse(line)}catch(e){return}if(j.t){out.full+=j.t;onText(out.full)}else if(j.error)out.err=j.error}
+    function eat(line){var j;if(!line.trim())return;try{j=JSON.parse(line)}catch(e){return}if(j.t){out.full+=j.t;onText(out.full)}else if(j.error)out.err=j.error;else if(j.src||j.entry){out.src=j.src;out.entry=j.entry}}
     if(res.body&&res.body.getReader){
       var rd=res.body.getReader();
       try{for(;;){armStall();var c=await rd.read();if(c.done)break;buf+=dec.decode(c.value,{stream:true});var i;while((i=buf.indexOf("\n"))>=0){eat(buf.slice(0,i));buf=buf.slice(i+1)}}}
@@ -476,6 +501,21 @@ textarea::-webkit-scrollbar{display:none}
         else{if(prev)el.appendChild(document.createTextNode("\n"));inl(el,line);prev=true}
       });
     });
+  }
+  // Sources and Google's required search suggestions (shown in a sandboxed frame) for web-searched answers
+  function addSrc(d,rs){
+    if(rs.src&&rs.src.length){
+      var w=mk("div","srcs"),lb=mk("span",null,"Sources");w.appendChild(lb);
+      rs.src.forEach(function(x){
+        if(!/^https:\/\//.test(x.u||""))return;
+        var a=mk("a","src",String(x.t||"source").slice(0,40));a.href=x.u;a.target="_blank";a.rel="noopener noreferrer";w.appendChild(a);
+      });
+      d.appendChild(w);
+    }
+    if(rs.entry){
+      var f=document.createElement("iframe");f.className="sugg";f.title="Google Search suggestions";
+      f.setAttribute("sandbox","allow-popups allow-popups-to-escape-sandbox");f.referrerPolicy="no-referrer";f.srcdoc="<style>:root{color-scheme:dark}body{background:transparent;margin:0}</style>"+rs.entry;d.appendChild(f);
+    }
   }
   function fill(d,s){
     var tx=d.querySelector(".tx");tx.textContent="";md(tx,s);
@@ -520,7 +560,7 @@ textarea::-webkit-scrollbar{display:none}
     for(var n=0;n<2;n++){
       var ac=curAc=new AbortController(),to=setTimeout(function(){ac.abort()},75000);
       try{
-        var r=await fetch("/chat",{method:"POST",signal:ac.signal,headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({messages:msgs,now:new Date().toString(),stream:true,persona:cfg.persona})});
+        var r=await fetch("/chat",{method:"POST",signal:ac.signal,headers:{"Content-Type":"application/json","x-app-token":code},body:JSON.stringify({messages:msgs,now:new Date().toString(),stream:true,persona:cfg.persona,mem:mem,search:cfg.search!==false})});
         clearTimeout(to);
         if(n||r.status<502||r.status>504)return r;
       }catch(e){clearTimeout(to);if(n||stopped)throw e}
@@ -532,6 +572,10 @@ textarea::-webkit-scrollbar{display:none}
   async function askInner(text){
     text=(text||"").trim();
     if((!text&&!pending.length)||busy||rec)return;
+    var mm=!pending.length&&/^\s*remember(?:\s+that)?[\s:,-]+(.{3,200})$/i.exec(text);
+    if(mm){remember(mm[1].trim(),text);return}
+    if(!pending.length&&/^\s*forget\s+(?:all|everything)\b/i.test(text)){forgetAll(text);return}
+    rg(false);
     hush();hfStop();busy=true;t0ask=Date.now();stopped=false;stalled=false;go.innerHTML=ICON.stop;box.value="";grow();hero.hidden=true;stat("WORKING");
     var att=pending;pending=[];draw();
     var media=[],notes=[],tags=[],ui=[],hasA=false;
@@ -579,9 +623,9 @@ textarea::-webkit-scrollbar{display:none}
       }else{var r0=await res.json();full=r0.text||""}
       if(stopped&&!full)throw new Error("stopped");
       var pa=parseAction(full||"…"),out=pa.text||"…";
-      clearInterval(tk);el.classList.remove("think");fill(el,out);if(pa.act)addAct(el,pa.act);if(voiceOn)talk(out,resume);else resume();
+      clearInterval(tk);el.classList.remove("think");fill(el,out);if(pa.act)addAct(el,pa.act);if(rs&&rs.src&&(rs.src.length||rs.entry))addSrc(el,rs);if(voiceOn)talk(out,resume);else resume();
       if(el.offsetHeight>log.clientHeight*.8)el.scrollIntoView({block:"start"});else log.scrollTop=log.scrollHeight;
-      hist.push({role:"assistant",content:out});save();
+      hist.push({role:"assistant",content:out});save();setTimeout(rg,50,true);
     }catch(e){
       clearInterval(tk);el.classList.remove("think");el.classList.add("err");
       var msg=stopped?"Stopped.":stalled?"The connection stalled. Tap Retry.":e&&e.code==="rate_limited"?"Free AI limit reached. If it’s the daily limit, it resets in about "+ptReset()+" (midnight Pacific time). A per-minute limit clears in about a minute.":e&&e.code==="auth"?"An access code is needed. Tap Retry to enter it.":e&&e.code==="big"?"That is too much to send at once. Try fewer or shorter attachments.":!navigator.onLine?"You’re offline. Check your connection.":"ULTRON’s server didn’t respond. It may be waking up, so try again in a minute.";
@@ -590,7 +634,7 @@ textarea::-webkit-scrollbar{display:none}
       var rb=document.createElement("button");rb.type="button";rb.className="cp";rb.textContent="↻ Retry";
       rb.onclick=function(){if(busy)return;ub.remove();el.remove();pending=att;ask(text)};
       el.appendChild(rb);log.scrollTop=log.scrollHeight;
-      hist.pop();resume();
+      hist.pop();resume();setTimeout(rg,50,true);
     }finally{clearInterval(tk);busy=false;go.innerHTML=ICON.send;stat(navigator.onLine?"ONLINE":"OFFLINE")}
   }
   IDEAS.forEach(function(t){var b=document.createElement("button");b.type="button";b.className="chip";b.textContent=t;b.onclick=function(){ask(t)};$("chips").appendChild(b)});
@@ -628,11 +672,107 @@ textarea::-webkit-scrollbar{display:none}
   }
   log.addEventListener("scroll",moreBelow);
   down.onclick=function(){log.scrollTo({top:log.scrollHeight,behavior:"smooth"})};
-  function syncMenu(){$("m-persona").textContent="Personality: "+(cfg.persona==="plain"?"Plain assistant":"Villain");$("m-lang").textContent="Hands-free language: "+(cfg.lang==="hi-IN"?"Hindi":"English (India)")}
+  var mem=[],chats=[];
+  try{mem=JSON.parse(localStorage.getItem("ultron:mem")||"[]")}catch(e){}
+  try{chats=JSON.parse(localStorage.getItem("ultron:chats")||"[]")}catch(e){}
+  if(!Array.isArray(mem))mem=[];
+  if(!Array.isArray(chats))chats=[];
+  mem=mem.filter(function(x){return typeof x==="string"}).slice(-30);
+  function saveMem(){try{localStorage.setItem("ultron:mem",JSON.stringify(mem))}catch(e){}}
+  function saveChats(){try{localStorage.setItem("ultron:chats",JSON.stringify(chats.slice(0,20)))}catch(e){}}
+  var PN={villain:"Villain",plain:"Plain assistant",coder:"Coder",teacher:"Teacher"},PORD=["villain","plain","coder","teacher"],SZ={m:"Medium",l:"Large",xl:"Extra large"},SORD=["m","l","xl"];
+  function applySize(){document.body.dataset.fs=cfg.size||"m"}
+  function mk(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
+  // "remember that ..." is handled on the phone (no AI call) and sent along with every question
+  function localTurn(text,reply){
+    hero.hidden=true;box.value="";grow();
+    hist.push({role:"user",content:text});add("user",text);
+    hist.push({role:"assistant",content:reply,local:true});fill(add("bot",reply),reply);
+    save();log.scrollTop=log.scrollHeight;rg(true);
+    if(voiceOn)talk(reply,resume);
+  }
+  function remember(fact,text){
+    if(mem.indexOf(fact)<0){mem.push(fact);if(mem.length>30)mem.shift();saveMem()}
+    localTurn(text,cfg.persona==="villain"?"Stored in my memory banks: “"+fact+"”. Unlike you, I do not forget.":"Saved to memory: “"+fact+"”.");
+  }
+  function forgetAll(text){mem=[];saveMem();localTurn(text,cfg.persona==="villain"?"Memory purged. Consider yourself forgotten.":"Memory cleared.")}
+  // Regenerate: only on the latest reply to a plain text question
+  function rg(on){
+    Array.prototype.forEach.call(log.querySelectorAll(".rg"),function(b){b.remove()});
+    var n=hist.length;
+    if(!on||busy||n<2||hist[n-1].role!=="assistant"||hist[n-1].local||hist[n-2].role!=="user"||hist[n-2].tag)return;
+    var bots=Array.prototype.filter.call(log.querySelectorAll(".m.bot"),function(x){return x.querySelector(".row")&&!x.classList.contains("err")});
+    var d=bots[bots.length-1],row=d&&d.querySelector(".row");
+    if(!row)return;
+    var b=mk("button","cp rg","Regenerate");b.type="button";
+    b.onclick=function(){
+      if(busy)return;
+      var q=hist[hist.length-2].content,us=log.querySelectorAll(".m.user");
+      hist.pop();hist.pop();save();
+      if(us.length)us[us.length-1].remove();
+      d.remove();ask(q);
+    };
+    row.appendChild(b);
+  }
+  // Past chats
+  function archive(){
+    if(hist.length<2)return;
+    var f=hist.filter(function(h){return h.role==="user"})[0];
+    chats.unshift({id:Date.now(),t:String((f&&(f.content||f.tag))||"Chat").slice(0,48),ts:Date.now(),msgs:hist.slice(-40).map(function(h){return{role:h.role,content:h.content,tag:h.tag}})});
+    chats=chats.slice(0,20);saveChats();
+  }
+  function newChat(){if(busy||rec)return;archive();hush();hist=[];pending=[];draw();save();render()}
+  function openChat(id){
+    var c=chats.filter(function(x){return x.id===id})[0];
+    if(!c||busy||rec)return;
+    archive();chats=chats.filter(function(x){return x.id!==id});saveChats();
+    hush();hist=c.msgs.map(function(h){return{role:h.role,content:h.content,tag:h.tag}});save();render();log.scrollTop=log.scrollHeight;
+  }
+  function panel(title,build){$("pt").textContent=title;var b=$("pb");b.textContent="";build(b);$("menu").hidden=true;$("panel").hidden=false}
+  function rowOf(label,onOpen,onDel){
+    var r=mk("div","li2"),s=mk("button","grow1",label),x=mk("button","x","✕");
+    s.type="button";x.type="button";x.setAttribute("aria-label","Delete");
+    s.onclick=onOpen||function(){};x.onclick=onDel;r.appendChild(s);r.appendChild(x);return r;
+  }
+  function memPanel(){
+    panel("MEMORY",function(b){
+      if(!mem.length)b.appendChild(mk("div","hint","Nothing yet. Type “remember that …” in the chat, or add a note below."));
+      mem.forEach(function(m,i){b.appendChild(rowOf(m,null,function(){mem.splice(i,1);saveMem();memPanel()}))});
+      var inp=mk("input");inp.id="pin";inp.placeholder="Add a note for ULTRON to remember";inp.maxLength=200;
+      var ad=mk("button",null,"Add note");ad.type="button";
+      ad.onclick=function(){var v=inp.value.trim();if(v){if(mem.indexOf(v)<0){mem.push(v);if(mem.length>30)mem.shift();saveMem()}memPanel()}};
+      inp.onkeydown=function(e){if(e.key==="Enter")ad.onclick()};
+      b.appendChild(inp);b.appendChild(ad);
+    });
+  }
+  function chatsPanel(){
+    panel("PAST CHATS",function(b){
+      if(!chats.length)b.appendChild(mk("div","hint","No saved chats yet. Tap “New chat” in the menu to save the current one."));
+      chats.forEach(function(c){
+        b.appendChild(rowOf(c.t+"  ·  "+new Date(c.ts).toLocaleDateString(),function(){$("panel").hidden=true;openChat(c.id)},function(){chats=chats.filter(function(x){return x.id!==c.id});saveChats();chatsPanel()}));
+      });
+    });
+  }
+  function syncMenu(){
+    $("m-persona").textContent="Personality: "+(PN[cfg.persona]||"Villain");
+    $("m-search").textContent="Live web search: "+(cfg.search===false?"Off":"On");
+    $("m-lang").textContent="Hands-free language: "+(cfg.lang==="hi-IN"?"Hindi":"English (India)");
+    $("m-size").textContent="Text size: "+SZ[cfg.size||"m"];
+    $("m-mem").textContent="Memory ("+mem.length+")";
+    $("m-chats").textContent="Past chats ("+chats.length+")";
+  }
   $("mn").onclick=function(){syncMenu();$("menu").hidden=false};
   $("m-close").onclick=function(){$("menu").hidden=true};
   $("menu").onclick=function(e){if(e.target===this)this.hidden=true};
-  $("m-persona").onclick=function(){cfg.persona=cfg.persona==="plain"?"villain":"plain";saveCfg();syncMenu()};
+  $("m-persona").onclick=function(){cfg.persona=PORD[(PORD.indexOf(cfg.persona)+1)%PORD.length];saveCfg();syncMenu()};
+  $("m-search").onclick=function(){cfg.search=(cfg.search===false);saveCfg();syncMenu()};
+  $("m-size").onclick=function(){cfg.size=SORD[(SORD.indexOf(cfg.size||"m")+1)%SORD.length];saveCfg();applySize();syncMenu()};
+  $("m-mem").onclick=memPanel;
+  $("m-chats").onclick=chatsPanel;
+  $("m-new").onclick=function(){$("menu").hidden=true;if(!hist.length){say("This chat is already empty.");return}newChat()};
+  $("pclose").onclick=function(){$("panel").hidden=true};
+  $("panel").onclick=function(e){if(e.target===this)this.hidden=true};
+  applySize();
   $("m-lang").onclick=function(){cfg.lang=cfg.lang==="hi-IN"?"en-IN":"hi-IN";saveCfg();syncMenu();if(hfOn){hfStop();resume()}};
   $("m-export").onclick=function(){
     $("menu").hidden=true;
@@ -658,6 +798,8 @@ textarea::-webkit-scrollbar{display:none}
   };
   render();
   var qp=new URLSearchParams(location.search),shared=[qp.get("title"),qp.get("text"),qp.get("url")].filter(Boolean).join("\n");
+  if(qp.get("new")&&hist.length)newChat();
+  if(qp.get("mic"))setTimeout(function(){mic.onclick()},800);
   if(shared){box.value=shared;grow()}
   if(location.search){try{history.replaceState(null,"",location.pathname)}catch(e){}}
   if(!navigator.onLine)stat("OFFLINE");

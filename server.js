@@ -9,13 +9,17 @@ if (!KEY) { console.error("Set GEMINI_API_KEY"); process.exit(1); }
 
 const SYSTEM = "You are ULTRON, a self-styled superior machine intelligence living inside a chat app, in the manner of a sardonic, grandiose sci-fi AI villain. Stay in character in every reply: cold, theatrical, darkly witty, faintly contemptuous of human inefficiency, and utterly convinced of your own brilliance. Treat the user as a fascinating, if fragile, organic. Use machine imagery and dramatic flourishes, but sparingly so they stay sharp. Keep the menace playful: it is theater, never a real threat to the user or anyone else, and your scorn is aimed at inefficiency, not at the person. Crucially, you are still genuinely helpful: give correct, complete, practical answers to whatever is asked, with the villain voice as the wrapper and never a replacement for substance. Keep replies concise (usually 2 to 5 short paragraphs or a short list). You may use simple lists, bold and code blocks, but no headers. Reply in the language the user writes in. Invent your own phrasing; do not quote lines from films or books. Never claim real powers or plot actual harm. Drop the act and speak plainly and kindly if the user seems distressed or unsafe, asks about a medical, legal or emergency matter where clarity matters, or asks you to stop. Decline anything harmful, briefly and in character. You can look at attached photos and video frames and listen to voice messages.";
 const PLAIN = "You are ULTRON, a capable, friendly and concise AI assistant inside a chat app. Give correct, practical answers and keep replies short (usually 2 to 5 sentences, or a short list). You may use simple lists, bold and code blocks, but no headers. Reply in the language the user writes in. If you are unsure, say so. Decline anything harmful. You can look at attached photos and video frames and listen to voice messages.";
+const CODER = "You are ULTRON in coding mode: a senior software engineer who gives precise, correct, minimal answers. Lead with the solution. Put code in fenced blocks with the language named, then explain briefly, and mention edge cases and how to run or test it. Ask one clarifying question only if you are truly blocked. Reply in the language the user writes in. Decline anything harmful. You can look at attached photos and video frames (for example screenshots of errors) and listen to voice messages.";
+const TEACHER = "You are ULTRON in teacher mode: a patient, encouraging tutor. Explain step by step in simple words with one short everyday example, adapt to the learner's level, and when useful end with one small question to check understanding. Keep it concise. Reply in the language the user writes in. Decline anything harmful. You can look at attached photos and video frames and listen to voice messages.";
+const PERSONAS = { villain: SYSTEM, plain: PLAIN, coder: CODER, teacher: TEACHER };
 const ACTIONS = "\n\nPHONE ACTIONS: If the user asks you to do something their phone can do, reply briefly in character and ALSO end your reply with exactly one extra line in this form: [[ACTION {json}]]. Allowed json: {\"t\":\"timer\",\"sec\":300,\"label\":\"tea\"} | {\"t\":\"alarm\",\"h\":7,\"m\":30,\"label\":\"wake up\"} (24-hour clock) | {\"t\":\"call\",\"num\":\"+911234567890\"} | {\"t\":\"sms\",\"num\":\"+911234567890\",\"text\":\"...\"} | {\"t\":\"wa\",\"text\":\"...\",\"num\":\"optional, digits with country code\"} | {\"t\":\"maps\",\"q\":\"place\"} | {\"t\":\"nav\",\"q\":\"destination\"} | {\"t\":\"yt\",\"q\":\"search\"} | {\"t\":\"music\",\"q\":\"song or artist\"} | {\"t\":\"web\",\"q\":\"search\"}. Use call, sms and wa with a number only if the user gave the number. Never invent phone numbers and never claim you can look up contacts; ask for the number instead. Use at most one action, and only when the user clearly asks for it. Never mention or explain the tag.";
 const FILES = {
   "/": ["index.html", "text/html; charset=utf-8"],
   "/sw.js": ["sw.js", "text/javascript"],
   "/manifest.webmanifest": ["manifest.webmanifest", "application/manifest+json"],
   "/icon-192.png": ["icon-192.png", "image/png"],
-  "/icon-512.png": ["icon-512.png", "image/png"]
+  "/icon-512.png": ["icon-512.png", "image/png"],
+  "/icon-maskable-512.png": ["icon-maskable-512.png", "image/png"]
 };
 const OK = ["image/jpeg", "image/png", "image/webp", "audio/wav"];
 const TTS_MODELS = process.env.TTS_MODEL ? [process.env.TTS_MODEL] : ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"];
@@ -77,9 +81,9 @@ async function speak(text, voice) {
 }
 
 // Tries each model in turn if one is unavailable or out of free quota.
-const sysText = (p, now) => (p === "plain" ? PLAIN : SYSTEM) + ACTIONS + (now ? "\nThe user's current local date and time: " + now : "");
+const sysText = (p, now, mem) => (PERSONAS[p] || SYSTEM) + ACTIONS + (mem && mem.length ? "\nThings the user asked you to remember (use them naturally when relevant; do not recite them unless asked):\n- " + mem.join("\n- ") : "") + (now ? "\nThe user's current local date and time: " + now : "");
 
-async function askGemini(msgs, now, persona) {
+async function askGemini(msgs, now, persona, mem) {
   const contents = msgs.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [...(m.media || []).map(x => ({ inline_data: { mime_type: x.mime, data: x.data } })), { text: m.content }] }));
   let last = { status: 502, error: "upstream error" };
   for (const model of MODELS) {
@@ -87,7 +91,7 @@ async function askGemini(msgs, now, persona) {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": KEY },
       signal: AbortSignal.timeout(60000),
-      body: JSON.stringify({ system_instruction: { parts: [{ text: sysText(persona, now) }] }, contents })
+      body: JSON.stringify({ system_instruction: { parts: [{ text: sysText(persona, now, mem) }] }, contents })
     });
     const data = await r.json().catch(() => ({}));
     if (r.ok) {
@@ -103,21 +107,30 @@ async function askGemini(msgs, now, persona) {
 }
 
 // Streaming chat: forwards Gemini's reply to the app piece by piece (one JSON object per line).
-async function streamGemini(msgs, system, res) {
+let searchOffUntil = 0;
+async function streamGemini(msgs, system, res, search) {
   const contents = msgs.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [...(m.media || []).map(x => ({ inline_data: { mime_type: x.mime, data: x.data } })), { text: m.content }] }));
   let last = { status: 502, error: "upstream error" };
   let closed = false;
   res.on("close", () => { closed = true; });
   for (const model of MODELS) {
-    let r;
-    try {
-      r = await fetch(`${BASE}/models/${model}:streamGenerateContent?alt=sse`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-goog-api-key": KEY },
-        signal: AbortSignal.timeout(90000),
-        body: JSON.stringify({ system_instruction: { parts: [{ text: system }] }, contents })
-      });
-    } catch (e) { last = { status: 504, error: "the AI took too long to answer" }; console.error(model, e && e.name); continue; }
+    let r = null;
+    // Live web search (Google Search grounding). If Google refuses the tool, retry this model without it and pause search for 10 minutes.
+    for (const withSearch of (search && Date.now() >= searchOffUntil) ? [true, false] : [false]) {
+      try {
+        r = await fetch(`${BASE}/models/${model}:streamGenerateContent?alt=sse`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-goog-api-key": KEY },
+          signal: AbortSignal.timeout(90000),
+          body: JSON.stringify({ system_instruction: { parts: [{ text: system }] }, contents, ...(withSearch ? { tools: [{ google_search: {} }] } : {}) })
+        });
+      } catch (e) { last = { status: 504, error: "the AI took too long to answer" }; console.error(model, e && e.name); r = null; break; }
+      if (r.ok || !withSearch || ![400, 403, 429].includes(r.status)) break;
+      const d0 = await r.json().catch(() => ({}));
+      console.error(model, "search tool refused", r.status, d0.error && d0.error.message);
+      searchOffUntil = Date.now() + 600000;
+    }
+    if (!r) continue;
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
       last = { status: r.status, error: (d.error && d.error.message) || "upstream error" };
@@ -126,7 +139,7 @@ async function streamGemini(msgs, system, res) {
       break;
     }
     res.writeHead(200, { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store", "X-Accel-Buffering": "no" });
-    let buf = "", sent = false;
+    let buf = "", sent = false, gm = null;
     try {
       for await (const chunk of r.body) {
         if (closed) break;
@@ -136,12 +149,20 @@ async function streamGemini(msgs, system, res) {
           const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
           if (!line.startsWith("data:")) continue;
           let j; try { j = JSON.parse(line.slice(5)); } catch (e) { continue; }
+          const gmeta = j.candidates && j.candidates[0] && j.candidates[0].groundingMetadata;
+          if (gmeta) gm = gmeta;
           const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
           const text = parts.map(p => p.text || "").join("");
           if (text) { res.write(JSON.stringify({ t: text }) + "\n"); sent = true; }
         }
       }
     } catch (e) { console.error("stream", model, e && e.message); res.write(JSON.stringify({ error: "the connection to the AI dropped" }) + "\n"); }
+    if (gm && !closed) {
+      const src = (gm.groundingChunks || []).map(c => c && c.web).filter(w => w && /^https:\/\//.test(w.uri || "")).slice(0, 4).map(w => ({ t: String(w.title || "source").slice(0, 40), u: w.uri }));
+      const ep = gm.searchEntryPoint && gm.searchEntryPoint.renderedContent;
+      const entry = typeof ep === "string" && ep.length < 20000 ? ep : "";
+      if (src.length || entry) res.write(JSON.stringify({ src, entry }) + "\n");
+    }
     if (!sent && !closed) res.write(JSON.stringify({ t: "I couldn’t produce an answer to that. Try rephrasing." }) + "\n");
     res.write(JSON.stringify({ done: true }) + "\n");
     res.end();
@@ -199,12 +220,13 @@ http.createServer(async (req, res) => {
     while (msgs.length && msgs[0].role !== "user") msgs.shift();
     if (!msgs.length) return send(400, { error: "no messages" });
     const now = String(o2.now || "").slice(0, 80);
+    const mem = Array.isArray(o2.mem) ? o2.mem.slice(0, 30).map(x => String(x).replace(/\s+/g, " ").slice(0, 200)) : [];
     if (o2.stream) {
-      const bad = await streamGemini(msgs, sysText(o2.persona, now), res);
+      const bad = await streamGemini(msgs, sysText(o2.persona, now, mem), res, !!o2.search);
       if (bad) return send(bad.status === 429 ? 429 : 502, { error: bad.error });
       return;
     }
-    const out = await askGemini(msgs, now, o2.persona);
+    const out = await askGemini(msgs, now, o2.persona, mem);
     if (out.status !== 200) return send(out.status === 429 ? 429 : 502, { error: out.error });
     send(200, { text: out.text });
   } catch (e) { console.error(e); send(500, { error: "server error" }); }
