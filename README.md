@@ -1,21 +1,30 @@
-# ULTRON: install as an app on your phone
+# ULTRON
 
-## 1. Put the files on GitHub
-Extract this zip (the Files app on Android can do it). Create a free GitHub account and a new repository, then upload every file from the folder (all files sit in one folder, no subfolders).
+An installable AI assistant app (PWA): chat, voice, photos and videos, hands-free "Hey ULTRON", and one-tap phone actions.
+Powered by Google's Gemini free tier. Red-and-black theme.
 
-## 2. Deploy on Render
-In Render: New > Web Service > connect your repository.
-- Start Command: `node server.js`
-- Environment variables:
-  - `ANTHROPIC_API_KEY`: your key from console.anthropic.com
-  - `APP_TOKEN`: a secret access code you choose (without it, anyone with the link can use your key)
-  - `ANTHROPIC_MODEL` (optional): defaults to `claude-sonnet-5-5`
+## Features
+Chat with streaming replies, voice messages, photos and videos, spoken replies, hands-free "Hey ULTRON", one-tap phone actions, four personalities (Villain, Plain, Coder, Teacher), memory ("remember that ..."), past chats, regenerate, text size, share-to-ULTRON and launcher shortcuts.
 
-Render gives you an address like `https://ultron-xxxx.onrender.com`. Free services sleep when idle, so the first message after a while can take about 30 seconds.
+## Files
+`server.js` (the server), `index.html` (the app), `sw.js` (offline cache), `manifest.webmanifest`, `face.jpg`, `icon-192.png`, `icon-512.png`, `icon-maskable-512.png`, `package.json`.
+Keep all files in one folder (no subfolders).
 
-## 3. Install it
-Open the address in Chrome on your phone. Tap the ⋮ menu, then **Install app** (or **Add to Home screen**). ULTRON now opens full screen from its own icon.
-The first message asks for your access code once.
+## Deploy (Render, free)
+1. Put every file in a GitHub repository.
+2. Render > New > Web Service > pick the repository. Start Command: `node server.js`. Instance type: Free.
+3. Environment variables:
+   - `GEMINI_API_KEY`: free key from aistudio.google.com (required)
+   - `APP_TOKEN`: your secret access code (strongly recommended)
+   - `TTS_VOICE` (optional): Algenib, Gacrux, Charon, Orus or Alnilam
+   - `GEMINI_MODEL`, `TTS_MODEL` (optional): override the model lists
+4. Open the Render address in Chrome > menu > Install app.
 
-## Updating
-Upload the changed file to GitHub. Render redeploys and the app updates itself.
+## Update
+Upload the changed files to GitHub. Render redeploys by itself (about a minute).
+Open ULTRON; if you see "A new version is ready", tap Update. Otherwise open it twice.
+
+## Good to know
+- The free Gemini plan has daily and per-minute limits, and the studio voice has very small ones. ULTRON falls back to your phone's voice.
+- Hands-free works only while the app is open and the screen is on.
+- Anything you attach or say is sent to Google's Gemini.
