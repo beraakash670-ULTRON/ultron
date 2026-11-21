@@ -177,6 +177,40 @@ body[data-fs="xl"] .m{font-size:20px}
 .srcs{margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12px;color:var(--mute)}
 .srcs a{color:var(--ink);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:3px 10px;background:var(--bg)}
 .sugg{display:block;width:100%;height:56px;border:0;margin-top:8px;color-scheme:dark;background:transparent}
+
+/* ---- UI refresh: skin layered on top (red and black kept) ---- */
+::selection{background:rgba(255,45,74,.38)}
+#log{scrollbar-width:thin;scrollbar-color:#3a1c22 transparent}
+body{background:radial-gradient(900px 420px at 50% -8%,rgba(255,45,74,.14),transparent 65%),radial-gradient(520px 340px at 100% 100%,rgba(255,45,74,.07),transparent 70%),var(--bg)}
+header::after{opacity:.85;background:linear-gradient(90deg,transparent,rgba(255,45,74,.95),transparent) -40% 0/40% 100% no-repeat,rgba(255,45,74,.18);animation:hsweep 5s ease-in-out infinite}
+@keyframes hsweep{0%{background-position:-40% 0,0 0}100%{background-position:140% 0,0 0}}
+#hero .w{text-shadow:0 0 28px rgba(255,45,74,.55),0 0 2px rgba(255,45,74,.9)}
+#hero p{margin:6px 0 16px;color:var(--mute)}
+.face{animation:breathe 4.5s ease-in-out infinite}
+@keyframes breathe{0%,100%{box-shadow:0 0 30px rgba(255,45,74,.28)}50%{box-shadow:0 0 52px rgba(255,45,74,.5)}}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 12px;text-align:left}
+.card{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:12px;border-radius:16px;border:1px solid rgba(255,255,255,.07);background:linear-gradient(160deg,rgba(255,45,74,.12),rgba(255,255,255,.02) 62%),#130c0f;color:var(--ink);text-align:left;animation:pop .35s ease-out both}
+.card:nth-child(2){animation-delay:.05s}.card:nth-child(3){animation-delay:.1s}.card:nth-child(4){animation-delay:.15s}
+.card svg.i{width:22px;height:22px;color:var(--accent);margin-bottom:6px}
+.card b{font-size:15px;font-weight:700}
+.card span{font-size:12px;color:var(--mute)}
+.card:active{transform:scale(.97);border-color:var(--accent)}
+#hero{width:100%;box-sizing:border-box}
+#chips{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:8px;padding:2px 2px 6px;scrollbar-width:none;justify-content:flex-start}
+#chips::-webkit-scrollbar{display:none}
+#chips .chip{flex:none;white-space:nowrap;font-size:13px;padding:7px 13px}
+.m.bot{background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,0) 40%),#130c0f;border-color:rgba(255,255,255,.06);border-left-color:var(--accent)}
+.m.think .tx::before{content:"";display:inline-block;width:18px;height:18px;margin-right:8px;vertical-align:-4px;border-radius:50%;background:url(icon-192.png) center/cover;animation:eyepulse 1.3s ease-out infinite}
+@keyframes eyepulse{0%{box-shadow:0 0 0 0 rgba(255,45,74,.55)}100%{box-shadow:0 0 0 9px rgba(255,45,74,0)}}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+.cp{border:1px solid rgba(255,255,255,.08);border-radius:999px;padding:4px 11px;font-size:12.5px;background:rgba(255,255,255,.02)}
+.cp:active{border-color:var(--accent);color:var(--ink)}
+.sheet::before{content:"";align-self:center;width:42px;height:4px;border-radius:2px;background:var(--line);margin:0 0 6px}
+.sheet{max-height:92%;overflow-y:auto;overscroll-behavior:contain}
+.sheet button{padding:15px 16px}
+@media (max-height:700px){.sheet button{padding:11px 14px}}
+@media (max-height:700px){.face{width:min(34vw,128px)}#hero .w{font-size:clamp(28px,10vw,40px)}}
+@media (prefers-reduced-motion:reduce){header::after,.face,.card,.m.think .tx::before{animation:none}}
 </style>
 </head>
 <body>
@@ -194,6 +228,7 @@ body[data-fs="xl"] .m{font-size:20px}
     <img id="hface" class="face" hidden alt="">
     <div class="w">ULTRON</div>
     <p>Type, speak, or show me photos and videos.</p>
+    <div class="cards" id="cards"></div>
     <div class="chips" id="chips"></div>
   </div>
 </div>
@@ -637,8 +672,17 @@ body[data-fs="xl"] .m{font-size:20px}
       hist.pop();resume();setTimeout(rg,50,true);
     }finally{clearInterval(tk);busy=false;go.innerHTML=ICON.send;stat(navigator.onLine?"ONLINE":"OFFLINE")}
   }
+  ICON.cam=SV('<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>');
+  ICON.globe=SV('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>');
+  ICON.clock=SV('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>');
+  [["mic","Talk to me","Record a voice message",function(){mic.onclick()}],
+   ["cam","Show me","Photo or video",function(){$("att").click()}],
+   ["globe","What’s new?","Live web search",function(){ask("What are the top news headlines today?")}],
+   ["clock","Set a timer","One-tap phone action",function(){ask("Set a timer for 5 minutes.")}]
+  ].forEach(function(c){var b=document.createElement("button");b.type="button";b.className="card";b.innerHTML=ICON[c[0]]+"<b>"+c[1]+"</b><span>"+c[2]+"</span>";b.onclick=c[3];$("cards").appendChild(b)});
   IDEAS.forEach(function(t){var b=document.createElement("button");b.type="button";b.className="chip";b.textContent=t;b.onclick=function(){ask(t)};$("chips").appendChild(b)});
-  go.onclick=function(){if(busy){if(Date.now()-t0ask<700)return;stopped=true;if(curAc)curAc.abort();return}ask(box.value)};
+  go.onclick=function(){if(busy){if(Date.now()-t0ask<700)return;stopped=true;if(curAc)curAc.abort();return}buzz();ask(box.value)};
+  function buzz(){try{navigator.vibrate&&navigator.vibrate(8)}catch(e){}}
   function ph(){box.placeholder=innerWidth<350?"Ask ULTRON…":"Command ULTRON…"}ph();addEventListener("resize",ph);
   box.addEventListener("input",grow);
   box.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing&&!touch){e.preventDefault();ask(box.value)}});
@@ -797,6 +841,7 @@ body[data-fs="xl"] .m{font-size:20px}
     talk("Voice "+(vIdx+1)+". Tremble, little human.");
   };
   render();
+  (function(){var h=new Date().getHours(),g=h<5?"Burning the midnight oil":h<12?"Good morning":h<17?"Good afternoon":h<22?"Good evening":"Good night",p=document.querySelector("#hero p");if(p)p.textContent=g+". Type, speak, or show me something."})();
   var qp=new URLSearchParams(location.search),shared=[qp.get("title"),qp.get("text"),qp.get("url")].filter(Boolean).join("\n");
   if(qp.get("new")&&hist.length)newChat();
   if(qp.get("mic"))setTimeout(function(){mic.onclick()},800);
